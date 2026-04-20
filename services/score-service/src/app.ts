@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
 import { startPlayerEventsConsumer } from './queue/consumer';
+import { connectScoreQueue } from './queue/publisher';
 
 dotenv.config({ path: '../../.env' });
 
@@ -29,6 +30,7 @@ app.use(errorHandler);
 async function start(): Promise<void> {
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
+  await connectScoreQueue(RABBITMQ_URL);
   await startPlayerEventsConsumer(RABBITMQ_URL);
   app.listen(PORT, () => {
     console.log(`Score Service running on port ${PORT}`);

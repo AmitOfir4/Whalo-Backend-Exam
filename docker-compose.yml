@@ -133,6 +133,26 @@ services:
       - whalo-network
     restart: unless-stopped
 
+  score-worker:
+    build:
+      context: .
+      dockerfile: services/score-worker/Dockerfile
+    container_name: whalo-score-worker
+    ports:
+      - '9235:9235'
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
 networks:
   whalo-network:
     driver: bridge

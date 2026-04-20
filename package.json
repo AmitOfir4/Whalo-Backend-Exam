@@ -13,7 +13,8 @@
     "dev:score": "npm run dev --workspace=services/score-service",
     "dev:leaderboard": "npm run dev --workspace=services/leaderboard-service",
     "dev:log": "npm run dev --workspace=services/log-service",
-    "dev:worker": "npm run dev --workspace=services/log-worker"
+    "dev:worker": "npm run dev --workspace=services/log-worker",
+    "dev:score-worker": "npm run dev --workspace=services/score-worker"
   },
   "dependencies": {
     "mongodb": "^7.1.1"

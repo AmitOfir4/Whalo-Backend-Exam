@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { Score } from '../models/score.model';
-import { PlayerScore } from '../models/player-score.model';
-import { AppError, getRedis, LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY } from '@whalo/shared';
+import { AppError, getRedis, USERNAMES_KEY, TOP10_CACHE_KEY } from '@whalo/shared';
 import mongoose from 'mongoose';
+import { publishScoreEvent } from '../queue/publisher';
 
 const TOP10_TTL = 10; // seconds
 
@@ -27,19 +27,12 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
       await redis.hset(USERNAMES_KEY, playerId, username!);
     }
 
-    // Insert score, update aggregated totals, and update Redis sorted set in parallel
-    const [newScore] = await Promise.all([
-      Score.create({ playerId, username, score }),
-      PlayerScore.updateOne(
-        { playerId },
-        { $inc: { totalScore: score, gamesPlayed: 1 }, $setOnInsert: { username } },
-        { upsert: true }
-      ),
-      redis.zincrby(LEADERBOARD_KEY, score, playerId),
-      redis.del(TOP10_CACHE_KEY), // invalidate top-10 cache
-    ]);
+    // Persist the score synchronously, offload aggregation + ranking to the score-worker
+    const newScore = await Score.create({ playerId, username, score });
 
-    res.status(201).json(newScore.toJSON());
+    await publishScoreEvent({ event: 'score.submitted', playerId, username, score });
+
+    res.status(202).json(newScore.toJSON());
   } catch (error) {
     next(error);
   }

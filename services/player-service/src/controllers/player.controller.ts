@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { Player } from '../models/player.model';
 import { AppError } from '@whalo/shared';
-import mongoose from 'mongoose';
 import { publishPlayerEvent } from '../queue/publisher';
 
 export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -20,13 +19,8 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
 
     const player = await Player.create({ username, email });
 
-    // Seed an entry in playerscores so the player appears on the lerboard immediately
-    await mongoose.connection.db!.collection('playerscores').insertOne({
-      playerId: player.playerId,
-      username: player.username,
-      totalScore: 0,
-      gamesPlayed: 0,
-    });
+    // Publish event so score-service creates the playerscores entry asynchronously
+    await publishPlayerEvent({ event: 'player.created', playerId: player.playerId, username: player.username });
 
     res.status(201).json(player.toJSON());
   } catch (error) {
@@ -88,6 +82,11 @@ export async function updatePlayer(req: Request, res: Response, next: NextFuncti
 
     if (!player) {
       throw new AppError('Player not found', 404);
+    }
+
+    // Propagate username change to score-service so denormalized data stays consistent
+    if (updateData.username) {
+      await publishPlayerEvent({ event: 'player.username_updated', playerId, username: updateData.username });
     }
 
     res.json(player.toJSON());

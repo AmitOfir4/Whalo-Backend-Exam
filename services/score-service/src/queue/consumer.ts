@@ -18,10 +18,38 @@ export async function startPlayerEventsConsumer(url: string): Promise<void> {
 
     try {
       const data = JSON.parse(msg.content.toString());
+      const redis = getRedis();
 
-      if (data.event === 'player.deleted' && data.playerId) {
+      if (data.event === 'player.created' && data.playerId && data.username) {
+        const { playerId, username } = data;
+
+        // Seed playerscores entry and cache username — idempotent via upsert
+        await Promise.all([
+          mongoose.connection.db!.collection('playerscores').updateOne(
+            { playerId },
+            { $setOnInsert: { playerId, username, totalScore: 0, gamesPlayed: 0 } },
+            { upsert: true }
+          ),
+          redis.hset(USERNAMES_KEY, playerId, username),
+        ]);
+
+        console.log(`Initialized data for new player: ${playerId}`);
+
+      } else if (data.event === 'player.username_updated' && data.playerId && data.username) {
+        const { playerId, username } = data;
+
+        // Cascade username change to all denormalized locations
+        await Promise.all([
+          mongoose.connection.db!.collection('scores').updateMany({ playerId }, { $set: { username } }),
+          mongoose.connection.db!.collection('playerscores').updateOne({ playerId }, { $set: { username } }),
+          redis.hset(USERNAMES_KEY, playerId, username),
+          redis.del(TOP10_CACHE_KEY),
+        ]);
+
+        console.log(`Updated username for player: ${playerId}`);
+
+      } else if (data.event === 'player.deleted' && data.playerId) {
         const { playerId } = data;
-        const redis = getRedis();
 
         // Remove from MongoDB playerscores, MongoDB scores, Redis sorted set,
         // Redis usernames hash, and invalidate top-10 cache — all in parallel
