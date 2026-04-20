@@ -19,16 +19,19 @@ app.use(express.json());
 
 app.use('/players', playerRoutes);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req, res) =>
+{
   res.json({ status: 'ok', service: 'player-service' });
 });
 
 app.use(errorHandler);
 
-async function start(): Promise<void> {
+async function start(): Promise<void>
+{
   await connectDB(MONGO_URI);
   await connectQueue(RABBITMQ_URL);
-  app.listen(PORT, () => {
+  app.listen(PORT, () =>
+  {
     console.log(`Player Service running on port ${PORT}`);
   });
 }

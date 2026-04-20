@@ -2,12 +2,17 @@ import Redis from 'ioredis';
 
 let redis: Redis | null = null;
 
-export function connectRedis(url: string): Redis {
-  if (redis) return redis;
+export function connectRedis(url: string): Redis
+{
+  if (redis)
+  {
+    return redis;
+  }
 
   redis = new Redis(url, {
     maxRetriesPerRequest: 3,
-    retryStrategy(times) {
+    retryStrategy(times)
+    {
       return Math.min(times * 200, 2000);
     },
   });
@@ -18,7 +23,11 @@ export function connectRedis(url: string): Redis {
   return redis;
 }
 
-export function getRedis(): Redis {
-  if (!redis) throw new Error('Redis not initialized — call connectRedis first');
+export function getRedis(): Redis
+{
+  if (!redis)
+  {
+    throw new Error('Redis not initialized — call connectRedis first');
+  }
   return redis;
 }

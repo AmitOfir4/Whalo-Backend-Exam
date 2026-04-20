@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 
-export class AppError extends Error {
+export class AppError extends Error
+{
   public statusCode: number;
   public details?: unknown;
 
-  constructor(message: string, statusCode: number, details?: unknown) {
+  constructor(message: string, statusCode: number, details?: unknown)
+  {
     super(message);
     this.statusCode = statusCode;
     this.details = details;
@@ -17,8 +19,10 @@ export function errorHandler(
   _req: Request,
   res: Response,
   _next: NextFunction
-): void {
-  if (err instanceof AppError) {
+): void
+{
+  if (err instanceof AppError)
+  {
     res.status(err.statusCode).json({
       error: {
         message: err.message,

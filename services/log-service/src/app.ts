@@ -18,15 +18,18 @@ app.use(express.json());
 
 app.use('/logs', logRoutes);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req, res) =>
+{
   res.json({ status: 'ok', service: 'log-service' });
 });
 
 app.use(errorHandler);
 
-async function start(): Promise<void> {
+async function start(): Promise<void>
+{
   await connectQueue(RABBITMQ_URL);
-  app.listen(PORT, () => {
+  app.listen(PORT, () =>
+  {
     console.log(`Log Service running on port ${PORT}`);
   });
 }

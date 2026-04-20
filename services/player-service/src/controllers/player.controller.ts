@@ -3,16 +3,21 @@ import { Player } from '../models/player.model';
 import { AppError } from '@whalo/shared';
 import { publishPlayerEvent } from '../queue/publisher';
 
-export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { username, email } = req.body;
 
     const existingPlayer = await Player.findOne({ $or: [{ email }, { username }] });
-    if (existingPlayer) {
-      if (existingPlayer.email === email) {
+    if (existingPlayer)
+    {
+      if (existingPlayer.email === email)
+      {
         throw new AppError('A player with this email already exists', 409);
       }
-      if (existingPlayer.username === username) {
+      if (existingPlayer.username === username)
+      {
         throw new AppError('A player with this username already exists', 409);
       }
     }
@@ -23,53 +28,70 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
     await publishPlayerEvent({ event: 'player.created', playerId: player.playerId, username: player.username });
 
     res.status(201).json(player.toJSON());
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }
 
-export async function getPlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function getPlayer(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { playerId } = req.params;
     const player = await Player.findOne({ playerId });
 
-    if (!player) {
+    if (!player)
+    {
       throw new AppError('Player not found', 404);
     }
 
     res.json(player.toJSON());
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }
 
-export async function getAllPlayers(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function getAllPlayers(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const players = await Player.find();
     res.json(players.map(player => player.toJSON()));
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }
 
-export async function updatePlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function updatePlayer(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { playerId } = req.params;
     const updateData: Record<string, string> = {};
 
     if (req.body.username) updateData.username = req.body.username;
     if (req.body.email) updateData.email = req.body.email;
 
-    if (updateData.email) {
+    if (updateData.email)
+    {
       const existingPlayer = await Player.findOne({ email: updateData.email, playerId: { $ne: playerId } });
-      if (existingPlayer) {
+      if (existingPlayer)
+      {
         throw new AppError('A player with this email already exists', 409);
       }
     }
 
-    if (updateData.username) {
+    if (updateData.username)
+    {
       const existingPlayer = await Player.findOne({ username: updateData.username, playerId: { $ne: playerId } });
-      if (existingPlayer) {
+      if (existingPlayer)
+      {
         throw new AppError('A player with this username already exists', 409);
       }
     }
@@ -80,34 +102,43 @@ export async function updatePlayer(req: Request, res: Response, next: NextFuncti
       { new: true, runValidators: true }
     );
 
-    if (!player) {
+    if (!player)
+    {
       throw new AppError('Player not found', 404);
     }
 
     // Propagate username change to score-service so denormalized data stays consistent
-    if (updateData.username) {
+    if (updateData.username)
+    {
       await publishPlayerEvent({ event: 'player.username_updated', playerId, username: updateData.username });
     }
 
     res.json(player.toJSON());
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }
 
-export async function deletePlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function deletePlayer(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { playerId } = req.params;
     const player = await Player.findOneAndDelete({ playerId });
 
-    if (!player) {
+    if (!player)
+    {
       throw new AppError('Player not found', 404);
     }
 
     await publishPlayerEvent({ event: 'player.deleted', playerId });
 
     res.json({ message: 'Player deleted successfully' });
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }

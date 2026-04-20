@@ -32,7 +32,8 @@ const playerSchema = new Schema<PlayerDocument>(
   {
     timestamps: true,
     toJSON: {
-      transform(_doc, ret) {
+      transform(_doc, ret)
+      {
         const { _id, __v, ...rest } = ret;
         return rest;
       },

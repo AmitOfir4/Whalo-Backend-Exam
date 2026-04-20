@@ -6,30 +6,41 @@ import mongoose from 'mongoose';
  * Backfill the Redis sorted set from MongoDB when Redis is cold (empty).
  * Runs once per cold start — subsequent calls are a no-op.
  */
-async function ensureLeaderboardPopulated(): Promise<void> {
+async function ensureLeaderboardPopulated(): Promise<void>
+{
   const redis = getRedis();
   const size = await redis.zcard(LEADERBOARD_KEY);
-  if (size > 0) return;
+  if (size > 0)
+  {
+    return;
+  }
 
   const playerScoresCollection = mongoose.connection.db!.collection('playerscores');
   const allScores = await playerScoresCollection
     .find({}, { projection: { _id: 0, playerId: 1, username: 1, totalScore: 1 } })
     .toArray();
 
-  if (allScores.length === 0) return;
+  if (allScores.length === 0)
+  {
+    return;
+  }
 
   const pipeline = redis.pipeline();
-  for (const doc of allScores) {
+  for (const doc of allScores)
+  {
     pipeline.zadd(LEADERBOARD_KEY, doc.totalScore, doc.playerId);
-    if (doc.username) {
+    if (doc.username)
+    {
       pipeline.hset(USERNAMES_KEY, doc.playerId, doc.username);
     }
   }
   await pipeline.exec();
 }
 
-export async function getLeaderboard(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function getLeaderboard(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const redis = getRedis();
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
@@ -45,14 +56,16 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
     // Parse pairs: [playerId, score, playerId, score, ...]
     const playerIds: string[] = [];
     const scores: number[] = [];
-    for (let i = 0; i < leaderboardRaw.length; i += 2) {
+    for (let i = 0; i < leaderboardRaw.length; i += 2)
+    {
       playerIds.push(leaderboardRaw[i]);
       scores.push(Number(leaderboardRaw[i + 1]));
     }
 
     // Batch-fetch usernames from Redis hash
     let usernames: (string | null)[] = [];
-    if (playerIds.length > 0) {
+    if (playerIds.length > 0)
+    {
       usernames = await redis.hmget(USERNAMES_KEY, ...playerIds);
     }
 
@@ -76,7 +89,9 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
         hasPreviousPage: page > 1,
       },
     });
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }

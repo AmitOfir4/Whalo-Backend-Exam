@@ -16,13 +16,15 @@ const config: BatcherConfig = {
   tokenBucketRefillRate: Number(process.env.TOKEN_BUCKET_REFILL_RATE) || 5,
 };
 
-async function start(): Promise<void> {
+async function start(): Promise<void>
+{
   await connectDB(MONGO_URI);
   await startConsumer(RABBITMQ_URL, config);
   console.log('Log Worker is running');
 }
 
-start().catch((error) => {
+start().catch((error) =>
+{
   console.error('Worker failed to start:', error);
   process.exit(1);
 });

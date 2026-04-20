@@ -7,7 +7,8 @@ const QUEUE_NAME = LOGS_QUEUE;
 export async function startConsumer(
   url: string,
   config: BatcherConfig
-): Promise<void> {
+): Promise<void>
+{
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
 
@@ -19,7 +20,8 @@ export async function startConsumer(
   // Prefetch controls how many unacknowledged messages the worker holds
   await channel.prefetch(config.batchSize * 2);
 
-  const batcher = new Batcher(config, (msg: ConsumeMessage) => {
+  const batcher = new Batcher(config, (msg: ConsumeMessage) =>
+  {
     channel.ack(msg);
   });
 
@@ -28,13 +30,20 @@ export async function startConsumer(
   console.log(`Max concurrent writes: ${config.maxConcurrentWrites}`);
   console.log(`Token bucket: capacity=${config.tokenBucketCapacity}, refill=${config.tokenBucketRefillRate}/s`);
 
-  channel.consume(QUEUE_NAME, (msg) => {
-    if (!msg) return;
+  channel.consume(QUEUE_NAME, (msg) =>
+  {
+    if (!msg)
+    {
+      return;
+    }
 
-    try {
+    try
+    {
       const data = JSON.parse(msg.content.toString());
       batcher.add(data, msg);
-    } catch (error) {
+    }
+    catch (error)
+    {
       console.error('Failed to parse message:', error);
       // Reject malformed messages without requeue
       channel.nack(msg, false, false);
@@ -42,7 +51,8 @@ export async function startConsumer(
   });
 
   // Graceful shutdown
-  process.on('SIGINT', async () => {
+  process.on('SIGINT', async () =>
+  {
     console.log('Shutting down worker...');
     await channel.close();
     await connection.close();

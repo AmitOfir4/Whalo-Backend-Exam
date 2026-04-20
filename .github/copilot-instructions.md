@@ -4,6 +4,20 @@ These rules apply to every file and every service in this monorepo. Follow them 
 
 ---
 
+## Skills
+
+The following project-level skills **must be loaded and applied** before generating any code:
+
+<skills>
+<skill>
+<name>allman-code-style</name>
+<description>Enforces Allman brace style for all code: opening braces always on their own new line for functions, classes, if/else, loops, try/catch, and switch blocks. ALWAYS load this skill before writing any new code.</description>
+<file>.github/copilot/skills/allman-code-style/SKILL.md</file>
+</skill>
+</skills>
+
+---
+
 ## Stack
 
 - **Runtime**: Node.js with **Express.js** for every microservice

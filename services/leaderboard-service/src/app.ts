@@ -18,16 +18,19 @@ app.use(express.json());
 
 app.use('/players', leaderboardRoutes);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req, res) =>
+{
   res.json({ status: 'ok', service: 'leaderboard-service' });
 });
 
 app.use(errorHandler);
 
-async function start(): Promise<void> {
+async function start(): Promise<void>
+{
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
-  app.listen(PORT, () => {
+  app.listen(PORT, () =>
+  {
     console.log(`Leaderboard Service running on port ${PORT}`);
   });
 }

@@ -32,7 +32,8 @@ const playerScoreSchema = new Schema<PlayerScoreDocument>(
   {
     timestamps: false,
     toJSON: {
-      transform(_doc, ret) {
+      transform(_doc, ret)
+      {
         const { _id, __v, ...rest } = ret;
         return rest;
       },

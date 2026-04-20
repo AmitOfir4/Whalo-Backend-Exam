@@ -21,18 +21,21 @@ app.use(express.json());
 
 app.use('/scores', scoreRoutes);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req, res) =>
+{
   res.json({ status: 'ok', service: 'score-service' });
 });
 
 app.use(errorHandler);
 
-async function start(): Promise<void> {
+async function start(): Promise<void>
+{
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
   await connectScoreQueue(RABBITMQ_URL);
   await startPlayerEventsConsumer(RABBITMQ_URL);
-  app.listen(PORT, () => {
+  app.listen(PORT, () =>
+  {
     console.log(`Score Service running on port ${PORT}`);
   });
 }

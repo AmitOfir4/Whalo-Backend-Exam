@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { publishLog } from '../queue/publisher';
 
-export async function createLog(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function createLog(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { playerId, logData, priority } = req.body;
 
     await publishLog(
@@ -18,7 +20,9 @@ export async function createLog(req: Request, res: Response, next: NextFunction)
     res.status(202).json({
       message: 'Log received and queued for processing',
     });
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }

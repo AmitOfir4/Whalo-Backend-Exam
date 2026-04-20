@@ -6,20 +6,24 @@ import { publishScoreEvent } from '../queue/publisher';
 
 const TOP10_TTL = 10; // seconds
 
-export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const { playerId, score } = req.body;
     const redis = getRedis();
 
     // Check player existence: Redis cache first, then MongoDB fallback
     let username = await redis.hget(USERNAMES_KEY, playerId);
 
-    if (!username) {
+    if (!username)
+    {
       const player = await mongoose.connection.db!.collection('players').findOne(
         { playerId },
         { projection: { _id: 0, username: 1 } }
       );
-      if (!player) {
+      if (!player)
+      {
         throw new AppError('Player not found', 404);
       }
       username = player.username;
@@ -33,18 +37,23 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
     await publishScoreEvent({ event: 'score.submitted', playerId, username, score });
 
     res.status(202).json(newScore.toJSON());
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }
 
-export async function getTopScores(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
+export async function getTopScores(_req: Request, res: Response, next: NextFunction): Promise<void>
+{
+  try
+  {
     const redis = getRedis();
 
     // Try Redis cache first
     const cached = await redis.get(TOP10_CACHE_KEY);
-    if (cached) {
+    if (cached)
+    {
       res.json(JSON.parse(cached));
       return;
     }
@@ -59,7 +68,9 @@ export async function getTopScores(_req: Request, res: Response, next: NextFunct
     await redis.set(TOP10_CACHE_KEY, JSON.stringify(topScores), 'EX', TOP10_TTL);
 
     res.json(topScores);
-  } catch (error) {
+  }
+  catch (error)
+  {
     next(error);
   }
 }

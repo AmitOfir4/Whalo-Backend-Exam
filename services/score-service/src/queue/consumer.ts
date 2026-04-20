@@ -4,7 +4,8 @@ import { getRedis, PLAYER_EVENTS_QUEUE, LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CA
 
 const QUEUE_NAME = PLAYER_EVENTS_QUEUE;
 
-export async function startPlayerEventsConsumer(url: string): Promise<void> {
+export async function startPlayerEventsConsumer(url: string): Promise<void>
+{
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
 
@@ -13,14 +14,20 @@ export async function startPlayerEventsConsumer(url: string): Promise<void> {
 
   console.log('Score service consuming from player_events queue');
 
-  channel.consume(QUEUE_NAME, async (msg) => {
-    if (!msg) return;
+  channel.consume(QUEUE_NAME, async (msg) =>
+  {
+    if (!msg)
+    {
+      return;
+    }
 
-    try {
+    try
+    {
       const data = JSON.parse(msg.content.toString());
       const redis = getRedis();
 
-      if (data.event === 'player.created' && data.playerId && data.username) {
+      if (data.event === 'player.created' && data.playerId && data.username)
+      {
         const { playerId, username } = data;
 
         // Seed playerscores entry and cache username — idempotent via upsert
@@ -35,7 +42,9 @@ export async function startPlayerEventsConsumer(url: string): Promise<void> {
 
         console.log(`Initialized data for new player: ${playerId}`);
 
-      } else if (data.event === 'player.username_updated' && data.playerId && data.username) {
+      }
+      else if (data.event === 'player.username_updated' && data.playerId && data.username)
+      {
         const { playerId, username } = data;
 
         // Cascade username change to all denormalized locations
@@ -48,7 +57,9 @@ export async function startPlayerEventsConsumer(url: string): Promise<void> {
 
         console.log(`Updated username for player: ${playerId}`);
 
-      } else if (data.event === 'player.deleted' && data.playerId) {
+      }
+      else if (data.event === 'player.deleted' && data.playerId)
+      {
         const { playerId } = data;
 
         // Remove from MongoDB playerscores, MongoDB scores, Redis sorted set,
@@ -62,19 +73,24 @@ export async function startPlayerEventsConsumer(url: string): Promise<void> {
         ]);
 
         console.log(`Cleaned up data for deleted player: ${playerId}`);
-      } else {
+      }
+      else
+      {
         console.warn(`Unknown player event: ${data.event}`);
       }
 
       channel.ack(msg);
-    } catch (error) {
+    }
+    catch (error)
+    {
       console.error('Failed to process player event:', error);
       // Requeue on failure so the message is not lost
       channel.nack(msg, false, true);
     }
   });
 
-  process.on('SIGINT', async () => {
+  process.on('SIGINT', async () =>
+  {
     await channel.close();
     await connection.close();
   });

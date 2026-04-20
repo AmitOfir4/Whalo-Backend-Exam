@@ -23,7 +23,8 @@ const scoreSchema = new Schema<ScoreDocument>(
   {
     timestamps: { createdAt: true, updatedAt: false },
     toJSON: {
-      transform(_doc, ret) {
+      transform(_doc, ret)
+      {
         const { _id, __v, ...rest } = ret;
         return rest;
       },
