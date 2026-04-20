@@ -6,9 +6,14 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
   try {
     const { username, email } = req.body;
 
-    const existingPlayer = await Player.findOne({ email });
+    const existingPlayer = await Player.findOne({ $or: [{ email }, { username }] });
     if (existingPlayer) {
-      throw new AppError('A player with this email already exists', 409);
+      if (existingPlayer.email === email) {
+        throw new AppError('A player with this email already exists', 409);
+      }
+      if (existingPlayer.username === username) {
+        throw new AppError('A player with this username already exists', 409);
+      }
     }
 
     const player = await Player.create({ username, email });
@@ -33,6 +38,15 @@ export async function getPlayer(req: Request, res: Response, next: NextFunction)
   }
 }
 
+export async function getAllPlayers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const players = await Player.find();
+    res.json(players.map(player => player.toJSON()));
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function updatePlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { playerId } = req.params;
@@ -41,10 +55,17 @@ export async function updatePlayer(req: Request, res: Response, next: NextFuncti
     if (req.body.username) updateData.username = req.body.username;
     if (req.body.email) updateData.email = req.body.email;
 
-    if (req.body.email) {
-      const existingPlayer = await Player.findOne({ email: req.body.email, playerId: { $ne: playerId } });
+    if (updateData.email) {
+      const existingPlayer = await Player.findOne({ email: updateData.email, playerId: { $ne: playerId } });
       if (existingPlayer) {
         throw new AppError('A player with this email already exists', 409);
+      }
+    }
+
+    if (updateData.username) {
+      const existingPlayer = await Player.findOne({ username: updateData.username, playerId: { $ne: playerId } });
+      if (existingPlayer) {
+        throw new AppError('A player with this username already exists', 409);
       }
     }
 

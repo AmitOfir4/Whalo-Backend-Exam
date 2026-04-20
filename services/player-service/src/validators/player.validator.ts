@@ -8,7 +8,8 @@ export const createPlayerSchema = z.object({
     .regex(/^\S+$/, 'Username must not contain spaces'),
   email: z
     .string({ required_error: 'Email is required' })
-    .email('Invalid email format'),
+    .email('Invalid email format')
+    .transform((val) => val.toLowerCase()),
 });
 
 export const updatePlayerSchema = z
@@ -18,8 +19,9 @@ export const updatePlayerSchema = z
       .min(3, 'Username must be at least 3 characters')
       .max(30, 'Username must be at most 30 characters')
       .regex(/^\S+$/, 'Username must not contain spaces')
+      .transform((val) => val.toLowerCase())
       .optional(),
-    email: z.string().email('Invalid email format').optional(),
+    email: z.string().email('Invalid email format').transform((val) => val.toLowerCase()).optional(),
   })
   .refine((data) => data.username || data.email, {
     message: 'At least one field (username or email) must be provided',

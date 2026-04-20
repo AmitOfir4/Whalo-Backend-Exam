@@ -12,19 +12,21 @@ const playerSchema = new Schema<PlayerDocument>(
       type: String,
       default: uuidv4,
       unique: true,
-      index: true,
+      index: true
     },
     username: {
       type: String,
       required: true,
+      unique: true,
       trim: true,
+      lowercase: true
     },
     email: {
       type: String,
       required: true,
       unique: true,
       trim: true,
-      lowercase: true,
+      lowercase: true
     }
   },
   {
