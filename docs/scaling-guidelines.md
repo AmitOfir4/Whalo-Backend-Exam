@@ -34,8 +34,10 @@ All microservices are designed to be **stateless** — they do not store session
 ### Indexing (Already Implemented)
 - `players.playerId` — unique index for O(1) lookups
 - `players.email` — unique index for duplicate detection
+- `players.username` — unique index for duplicate detection
 - `scores.score` — descending index for top scores query
-- `scores.playerId` — index for leaderboard aggregation
+- `scores.playerId` — index for per-player queries
+- `playerscores.totalScore` — descending index for aggregation fallback
 - `logs.playerId` — index for log filtering
 
 ### Read Replicas
@@ -49,6 +51,8 @@ For very large datasets, shard the `scores` collection:
 - **Shard key**: `playerId` (ensures all scores for a player are on the same shard)
 - Enables horizontal scaling of the data layer
 
+> **Note:** The leaderboard reads exclusively from Redis — MongoDB `playerscores` is the durable backup, not the read path. Sharding `playerscores` on `playerId` keeps cold-start backfill efficient.
+
 ### Connection Pooling
 Mongoose manages connection pools by default. For high-load scenarios:
 ```typescript
@@ -61,56 +65,65 @@ mongoose.connect(uri, {
 
 ---
 
-## 3. Caching — Redis Layer
+## 3. Caching & Ranking — Redis Layer
 
-Add Redis as a caching layer for frequently accessed, read-heavy data:
+Redis is already integrated as a core part of the system, not an optional add-on. It serves two distinct roles:
 
-### Leaderboard Cache
+### Leaderboard Sorted Set (Primary Ranking Store)
+The leaderboard is backed by a Redis Sorted Set — not MongoDB aggregation.
+
 ```
-GET /players/leaderboard → Check Redis → if miss → MongoDB aggregation → store in Redis (TTL: 60s)
+POST /scores → Score Service → score_events queue → Score Worker
+  → ZINCRBY leaderboard <score> <playerId>   (real-time ranking update)
+  → updateOne playerscores                   (durable aggregation)
 ```
 
-- Leaderboard changes slowly relative to read frequency
-- 60-second TTL balances freshness vs performance
-- Invalidate cache on new score submission
+- `ZINCRBY` updates the sorted set atomically and in O(log N)
+- `ZREVRANGE` serves paginated reads in O(log N + M)
+- On cold start (empty sorted set) the leaderboard service backfills from the `playerscores` MongoDB collection
+- No TTL — the sorted set is the source of truth for rankings
 
 ### Top Scores Cache
 ```
-GET /scores/top → Check Redis → if miss → MongoDB query → store in Redis (TTL: 30s)
+GET /scores/top → Check Redis (top10scores) → if miss → MongoDB query → store in Redis (TTL: 10s)
 ```
 
-### Implementation Pattern
-```typescript
-import Redis from 'ioredis';
-const redis = new Redis(process.env.REDIS_URL);
+- Cached with a 10-second TTL
+- Invalidated immediately when a new score is submitted or a username/player is updated
 
-async function getCachedOrFetch<T>(
-  key: string,
-  ttlSeconds: number,
-  fetchFn: () => Promise<T>
-): Promise<T> {
-  const cached = await redis.get(key);
-  if (cached) return JSON.parse(cached);
+### Username Hash
+Usernames are cached in a Redis hash (`leaderboard:usernames`) for O(1) player existence checks and leaderboard reads without MongoDB lookups.
 
-  const data = await fetchFn();
-  await redis.setex(key, ttlSeconds, JSON.stringify(data));
-  return data;
-}
-```
+### Redis Scaling
+- For high availability, use **Redis Sentinel** (automatic failover) or **Redis Cluster** (horizontal sharding)
+- Persistence: enable **AOF** (`appendonly yes`) to survive restarts without losing ranking data
+- Memory: allocate enough RAM to hold the full sorted set — at 1M players this is roughly 64 MB
 
 ---
 
 ## 4. Message Queue Scaling — RabbitMQ
 
 ### Multiple Workers
-Scale the log-worker horizontally — each instance consumes from the same queue independently:
+Scale the log-worker and score-worker horizontally — each instance consumes from the same queue independently:
 
 ```yaml
 # docker-compose scale command
 docker-compose up --scale log-worker=3
+docker-compose up --scale score-worker=5
 ```
 
 RabbitMQ automatically distributes messages across consumers using round-robin.
+
+### Priority Queue (Log Worker)
+The `logs_queue` is declared with `x-max-priority: 3`, mapping to:
+
+| Priority | AMQP Value |
+|----------|-----------|
+| `high`   | 3         |
+| `normal` | 2         |
+| `low`    | 1         |
+
+High-priority logs are processed before lower-priority ones within the same consumer's prefetch window.
 
 ### RabbitMQ Clustering
 For high availability, deploy a RabbitMQ cluster with mirrored queues:
@@ -193,19 +206,21 @@ With Kubernetes or Docker Swarm:
                                     ┌──────────▼──────┐
                                     │  Amazon MQ      │
                                     │  (RabbitMQ)     │
-                                    └──────────┬──────┘
-                                               │
-                                    ┌──────────▼──────┐
-                                    │  ECS Workers    │
-                                    │  (Auto-scaling) │
-                                    └─────────────────┘
+                                    └──────┬──────────┘
+                                           │        │
+                               ┌───────────▼──┐  ┌──▼───────────┐
+                               │  ECS         │  │  ECS         │
+                               │  Log Workers │  │  Score       │
+                               │  (scaled)    │  │  Workers     │
+                               └──────────────┘  └─────────────-┘
 ```
 
 ### AWS Services Mapping
 | Component | AWS Service |
 |-----------|-------------|
 | Microservices | ECS Fargate (serverless containers) |
-| MongoDB | DocumentDB or MongoDB Atlas |
+| MongoDB | MongoDB Atlas |
+| Redis | ElastiCache for Redis |
 | RabbitMQ | Amazon MQ |
 | Load Balancer | Application Load Balancer |
 | DNS | Route 53 |
