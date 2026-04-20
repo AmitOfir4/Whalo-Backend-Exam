@@ -3,7 +3,7 @@ export { connectRedis, getRedis } from './config/redis';
 export { AppError, errorHandler } from './middleware/error-handler';
 export { validate, validateQuery } from './middleware/validate';
 
-export { LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY } from './constants/redis-keys';
+export { LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY, TOP_SCORES_SET, TOP_SCORES_DATA } from './constants/redis-keys';
 export { LOGS_QUEUE, PLAYER_EVENTS_QUEUE, SCORE_EVENTS_QUEUE } from './constants/queue-names';
 
 export type { IPlayer, CreatePlayerDto, UpdatePlayerDto } from './types/player.types';

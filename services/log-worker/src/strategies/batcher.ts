@@ -44,6 +44,8 @@ export class Batcher
   private buffer: BufferedMessage[] = [];
   private timer: NodeJS.Timeout | null = null;
   private hasHighPriority: boolean = false;
+  private activeFlushes: number = 0;
+  private drainResolve: (() => void) | null = null;
   private readonly config: BatcherConfig;
   private readonly tokenBucket: TokenBucket;
   private readonly semaphore: Semaphore;
@@ -102,6 +104,7 @@ export class Batcher
     this.buffer = [];
     this.hasHighPriority = false;
 
+    this.activeFlushes++;
     try
     {
       // Acquire concurrency slot (wait if max parallel writes reached)
@@ -140,6 +143,34 @@ export class Batcher
     {
       // On failure, messages are NOT acknowledged → RabbitMQ will redeliver
       console.error(`Failed to write batch of ${batch.length} logs:`, error);
+    }
+    finally
+    {
+      this.activeFlushes--;
+      if (this.activeFlushes === 0 && this.drainResolve)
+      {
+        this.drainResolve();
+        this.drainResolve = null;
+      }
+    }
+  }
+
+  /**
+   * Flush remaining buffered messages and wait for all in-progress writes to
+   * complete before the process exits. Called during graceful shutdown.
+   */
+  async shutdown(): Promise<void>
+  {
+    // Flush any messages still in the buffer
+    await this.flush();
+
+    // Wait for any concurrently running flushes to finish
+    if (this.activeFlushes > 0)
+    {
+      await new Promise<void>((resolve) =>
+      {
+        this.drainResolve = resolve;
+      });
     }
   }
 }

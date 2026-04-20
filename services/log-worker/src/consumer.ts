@@ -30,7 +30,7 @@ export async function startConsumer(
   console.log(`Max concurrent writes: ${config.maxConcurrentWrites}`);
   console.log(`Token bucket: capacity=${config.tokenBucketCapacity}, refill=${config.tokenBucketRefillRate}/s`);
 
-  channel.consume(QUEUE_NAME, (msg) =>
+  const { consumerTag } = await channel.consume(QUEUE_NAME, (msg) =>
   {
     if (!msg)
     {
@@ -50,12 +50,19 @@ export async function startConsumer(
     }
   });
 
-  // Graceful shutdown
-  process.on('SIGINT', async () =>
+  // Graceful shutdown — flush buffered messages before closing
+  async function gracefulShutdown(): Promise<void>
   {
-    console.log('Shutting down worker...');
+    console.log('Log worker shutting down...');
+    // Stop RabbitMQ from delivering new messages
+    await channel.cancel(consumerTag);
+    // Flush buffered messages and wait for all in-progress writes to finish
+    await batcher.shutdown();
     await channel.close();
     await connection.close();
     process.exit(0);
-  });
+  }
+
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
 }

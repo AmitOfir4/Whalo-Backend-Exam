@@ -6,6 +6,7 @@ import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
 import { startPlayerEventsConsumer } from './queue/consumer';
 import { connectScoreQueue } from './queue/publisher';
+import { hydrateTopScoresFromMongo } from './controllers/score.controller';
 
 dotenv.config({ path: '../../.env' });
 
@@ -34,6 +35,10 @@ async function start(): Promise<void>
   connectRedis(REDIS_URL);
   await connectScoreQueue(RABBITMQ_URL);
   await startPlayerEventsConsumer(RABBITMQ_URL);
+
+  // Cold-start: populate top scores from MongoDB if Redis is empty
+  await hydrateTopScoresFromMongo();
+
   app.listen(PORT, () =>
   {
     console.log(`Score Service running on port ${PORT}`);
