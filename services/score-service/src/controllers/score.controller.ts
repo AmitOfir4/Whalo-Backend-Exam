@@ -1,30 +1,45 @@
 import { Request, Response, NextFunction } from 'express';
 import { Score } from '../models/score.model';
 import { PlayerScore } from '../models/player-score.model';
-import { AppError } from '@whalo/shared';
+import { AppError, getRedis } from '@whalo/shared';
 import mongoose from 'mongoose';
+
+const LEADERBOARD_KEY = 'leaderboard';
+const USERNAMES_KEY = 'leaderboard:usernames';
+const TOP10_CACHE_KEY = 'top10scores';
+const TOP10_TTL = 10; // seconds
 
 export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { playerId, score } = req.body;
+    const redis = getRedis();
 
-    // Verify the player exists — projection limits returned data to just _id
-    const playerExists = await mongoose.connection.db!.collection('players').findOne(
-      { playerId },
-      { projection: { _id: 1 } }
-    );
-    if (!playerExists) {
-      throw new AppError('Player not found', 404);
+    // Check player existence: Redis cache first, then MongoDB fallback
+    let username = await redis.hget(USERNAMES_KEY, playerId);
+
+    if (!username) {
+      const player = await mongoose.connection.db!.collection('players').findOne(
+        { playerId },
+        { projection: { _id: 0, username: 1 } }
+      );
+      if (!player) {
+        throw new AppError('Player not found', 404);
+      }
+      username = player.username;
+      // Cache the username for future lookups
+      await redis.hset(USERNAMES_KEY, playerId, username!);
     }
 
-    // Insert individual score and atomically update aggregated totals in parallel
+    // Insert score, update aggregated totals, and update Redis sorted set in parallel
     const [newScore] = await Promise.all([
-      Score.create({ playerId, score }),
+      Score.create({ playerId, username, score }),
       PlayerScore.updateOne(
         { playerId },
-        { $inc: { totalScore: score, gamesPlayed: 1 } },
+        { $inc: { totalScore: score, gamesPlayed: 1 }, $setOnInsert: { username } },
         { upsert: true }
       ),
+      redis.zincrby(LEADERBOARD_KEY, score, playerId),
+      redis.del(TOP10_CACHE_KEY), // invalidate top-10 cache
     ]);
 
     res.status(201).json(newScore.toJSON());
@@ -35,28 +50,23 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
 
 export async function getTopScores(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const topScores = await Score.aggregate([
-      { $sort: { score: -1 } },
-      { $limit: 10 },
-      {
-        $lookup: {
-          from: 'players',
-          localField: 'playerId',
-          foreignField: 'playerId',
-          as: 'player',
-        },
-      },
-      { $unwind: { path: '$player', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          _id: 0,
-          playerId: 1,
-          username: { $ifNull: ['$player.username', 'Unknown'] },
-          score: 1,
-          createdAt: 1,
-        },
-      },
-    ]);
+    const redis = getRedis();
+
+    // Try Redis cache first
+    const cached = await redis.get(TOP10_CACHE_KEY);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
+    // Cache miss — query MongoDB (no $lookup needed, username is denormalized)
+    const topScores = await Score.find({}, { _id: 0, playerId: 1, username: 1, score: 1, createdAt: 1 })
+      .sort({ score: -1 })
+      .limit(10)
+      .lean();
+
+    // Cache result with short TTL
+    await redis.set(TOP10_CACHE_KEY, JSON.stringify(topScores), 'EX', TOP10_TTL);
 
     res.json(topScores);
   } catch (error) {

@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { connectDB, errorHandler } from '@whalo/shared';
+import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
 
 dotenv.config({ path: '../../.env' });
@@ -10,6 +10,7 @@ dotenv.config({ path: '../../.env' });
 const app = express();
 const PORT = process.env.SCORE_SERVICE_PORT || 3002;
 const MONGO_URI = process.env.MONGO_URI || '';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 app.use(helmet());
 app.use(cors());
@@ -25,6 +26,7 @@ app.use(errorHandler);
 
 async function start(): Promise<void> {
   await connectDB(MONGO_URI);
+  connectRedis(REDIS_URL);
   app.listen(PORT, () => {
     console.log(`Score Service running on port ${PORT}`);
   });

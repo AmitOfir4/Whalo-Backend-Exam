@@ -32,4 +32,4 @@ USER node
 
 WORKDIR /app/services/log-worker
 
-CMD ["node", "dist/worker.js"]
+CMD ["node", "--inspect=0.0.0.0:9233", "dist/worker.js"]

@@ -2,6 +2,19 @@ version: '3.8'
 
 services:
   # ── Infrastructure ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: whalo-redis
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whalo-network
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: whalo-rabbitmq
@@ -27,6 +40,7 @@ services:
     container_name: whalo-player-service
     ports:
       - '3001:3001'
+      - '9234:9234'
     environment:
       MONGO_URI: ${MONGO_URI}
       PLAYER_SERVICE_PORT: 3001
@@ -41,9 +55,14 @@ services:
     container_name: whalo-score-service
     ports:
       - '3002:3002'
+      - '9230:9230'
     environment:
       MONGO_URI: ${MONGO_URI}
+      REDIS_URL: redis://redis:6379
       SCORE_SERVICE_PORT: 3002
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - whalo-network
     restart: unless-stopped
@@ -55,9 +74,14 @@ services:
     container_name: whalo-leaderboard-service
     ports:
       - '3003:3003'
+      - '9231:9231'
     environment:
       MONGO_URI: ${MONGO_URI}
+      REDIS_URL: redis://redis:6379
       LEADERBOARD_SERVICE_PORT: 3003
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - whalo-network
     restart: unless-stopped
@@ -69,6 +93,7 @@ services:
     container_name: whalo-log-service
     ports:
       - '3004:3004'
+      - '9232:9232'
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       LOG_SERVICE_PORT: 3004
@@ -84,6 +109,8 @@ services:
       context: .
       dockerfile: services/log-worker/Dockerfile
     container_name: whalo-log-worker
+    ports:
+      - '9233:9233'
     environment:
       MONGO_URI: ${MONGO_URI}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672

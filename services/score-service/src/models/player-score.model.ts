@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface PlayerScoreDocument extends Document {
   playerId: string;
+  username: string;
   totalScore: number;
   gamesPlayed: number;
 }
@@ -12,6 +13,10 @@ const playerScoreSchema = new Schema<PlayerScoreDocument>(
       type: String,
       required: true,
       unique: true,
+    },
+    username: {
+      type: String,
+      required: true,
     },
     totalScore: {
       type: Number,

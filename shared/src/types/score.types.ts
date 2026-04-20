@@ -1,5 +1,6 @@
 export interface IScore {
   playerId: string;
+  username: string;
   score: number;
   createdAt: Date;
 }

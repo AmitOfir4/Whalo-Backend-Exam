@@ -19,9 +19,10 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
 
     const player = await Player.create({ username, email });
 
-    // Seed an entry in playerscores so the player appears on the leaderboard immediately
+    // Seed an entry in playerscores so the player appears on the lerboard immediately
     await mongoose.connection.db!.collection('playerscores').insertOne({
       playerId: player.playerId,
+      username: player.username,
       totalScore: 0,
       gamesPlayed: 0,
     });

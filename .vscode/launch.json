@@ -1,0 +1,72 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach: player-service",
+      "type": "node",
+      "request": "attach",
+      "port": 9234,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}/services/player-service",
+      "remoteRoot": "/app/services/player-service"
+    },
+    {
+      "name": "Attach: score-service",
+      "type": "node",
+      "request": "attach",
+      "port": 9230,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}/services/score-service",
+      "remoteRoot": "/app/services/score-service"
+    },
+    {
+      "name": "Attach: leaderboard-service",
+      "type": "node",
+      "request": "attach",
+      "port": 9231,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}/services/leaderboard-service",
+      "remoteRoot": "/app/services/leaderboard-service"
+    },
+    {
+      "name": "Attach: log-service",
+      "type": "node",
+      "request": "attach",
+      "port": 9232,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}/services/log-service",
+      "remoteRoot": "/app/services/log-service"
+    },
+    {
+      "name": "Attach: log-worker",
+      "type": "node",
+      "request": "attach",
+      "port": 9233,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}/services/log-worker",
+      "remoteRoot": "/app/services/log-worker"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Attach: All Services",
+      "configurations": [
+        "Attach: player-service",
+        "Attach: score-service",
+        "Attach: leaderboard-service",
+        "Attach: log-service",
+        "Attach: log-worker"
+      ]
+    }
+  ]
+}

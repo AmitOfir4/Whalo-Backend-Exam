@@ -1,4 +1,5 @@
 export { connectDB } from './config/db';
+export { connectRedis, getRedis } from './config/redis';
 export { AppError, errorHandler } from './middleware/error-handler';
 export { validate, validateQuery } from './middleware/validate';
 
