@@ -1,0 +1,21 @@
+{
+  "name": "whalo-backend-exam",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mobile game backend microservices — Player, Score, Leaderboard, Log",
+  "workspaces": [
+    "shared",
+    "services/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:player": "npm run dev --workspace=services/player-service",
+    "dev:score": "npm run dev --workspace=services/score-service",
+    "dev:leaderboard": "npm run dev --workspace=services/leaderboard-service",
+    "dev:log": "npm run dev --workspace=services/log-service",
+    "dev:worker": "npm run dev --workspace=services/log-worker"
+  },
+  "dependencies": {
+    "mongodb": "^7.1.1"
+  }
+}

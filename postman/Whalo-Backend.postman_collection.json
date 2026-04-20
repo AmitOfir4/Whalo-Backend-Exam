@@ -1,0 +1,333 @@
+{
+  "info": {
+    "name": "Whalo Backend API",
+    "description": "Mobile game backend microservices — Player Management, Game Scores, Leaderboard, and Log Management",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "playerServiceUrl", "value": "http://localhost:3001" },
+    { "key": "scoreServiceUrl", "value": "http://localhost:3002" },
+    { "key": "leaderboardServiceUrl", "value": "http://localhost:3003" },
+    { "key": "logServiceUrl", "value": "http://localhost:3004" },
+    { "key": "playerId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Player Management Service",
+      "item": [
+        {
+          "name": "Create Player",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"PlayerOne\",\n  \"email\": \"player1@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{playerServiceUrl}}/players",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.playerId) {",
+                  "    pm.collectionVariables.set('playerId', response.playerId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 - Player Created",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"username\": \"PlayerOne\",\n  \"email\": \"player1@example.com\",\n  \"createdAt\": \"2026-04-19T10:00:00.000Z\",\n  \"updatedAt\": \"2026-04-19T10:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Player by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{playerServiceUrl}}/players/{{playerId}}",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players", "{{playerId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Player Found",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"username\": \"PlayerOne\",\n  \"email\": \"player1@example.com\",\n  \"createdAt\": \"2026-04-19T10:00:00.000Z\",\n  \"updatedAt\": \"2026-04-19T10:00:00.000Z\"\n}"
+            },
+            {
+              "name": "404 - Player Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "body": "{\n  \"error\": {\n    \"message\": \"Player not found\",\n    \"code\": 404\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Player",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"UpdatedPlayer\"\n}"
+            },
+            "url": {
+              "raw": "{{playerServiceUrl}}/players/{{playerId}}",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players", "{{playerId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Player Updated",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"username\": \"UpdatedPlayer\",\n  \"email\": \"player1@example.com\",\n  \"createdAt\": \"2026-04-19T10:00:00.000Z\",\n  \"updatedAt\": \"2026-04-19T10:05:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Player",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{playerServiceUrl}}/players/{{playerId}}",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players", "{{playerId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Player Deleted",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Player deleted successfully\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Player - Validation Error",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"ab\"\n}"
+            },
+            "url": {
+              "raw": "{{playerServiceUrl}}/players",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players"]
+            }
+          },
+          "response": [
+            {
+              "name": "400 - Validation Failed",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": 400,\n    \"details\": [\n      { \"field\": \"username\", \"message\": \"Username must be at least 3 characters\" },\n      { \"field\": \"email\", \"message\": \"Required\" }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Game Score Service",
+      "item": [
+        {
+          "name": "Submit Score",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"{{playerId}}\",\n  \"score\": 1500\n}"
+            },
+            "url": {
+              "raw": "{{scoreServiceUrl}}/scores",
+              "host": ["{{scoreServiceUrl}}"],
+              "path": ["scores"]
+            }
+          },
+          "response": [
+            {
+              "name": "201 - Score Submitted",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"score\": 1500,\n  \"createdAt\": \"2026-04-19T10:10:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Top 10 Scores",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{scoreServiceUrl}}/scores/top",
+              "host": ["{{scoreServiceUrl}}"],
+              "path": ["scores", "top"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Top Scores",
+              "status": "OK",
+              "code": 200,
+              "body": "[\n  { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\", \"score\": 5000, \"createdAt\": \"2026-04-19T10:00:00.000Z\" },\n  { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\", \"score\": 4500, \"createdAt\": \"2026-04-19T10:05:00.000Z\" }\n]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Leaderboard Service",
+      "item": [
+        {
+          "name": "Get Leaderboard (Page 1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{leaderboardServiceUrl}}/players/leaderboard?page=1&limit=10",
+              "host": ["{{leaderboardServiceUrl}}"],
+              "path": ["players", "leaderboard"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Leaderboard",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\", \"totalScore\": 8500, \"gamesPlayed\": 5 },\n    { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\", \"totalScore\": 6200, \"gamesPlayed\": 3 }\n  ],\n  \"pagination\": {\n    \"page\": 1,\n    \"limit\": 10,\n    \"totalPlayers\": 50,\n    \"totalPages\": 5,\n    \"hasNextPage\": true,\n    \"hasPreviousPage\": false\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Leaderboard (Page 2, Limit 5)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{leaderboardServiceUrl}}/players/leaderboard?page=2&limit=5",
+              "host": ["{{leaderboardServiceUrl}}"],
+              "path": ["players", "leaderboard"],
+              "query": [
+                { "key": "page", "value": "2" },
+                { "key": "limit", "value": "5" }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Log Management Service",
+      "item": [
+        {
+          "name": "Submit Log",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"{{playerId}}\",\n  \"logData\": \"Player completed level 5 with score 1500\"\n}"
+            },
+            "url": {
+              "raw": "{{logServiceUrl}}/logs",
+              "host": ["{{logServiceUrl}}"],
+              "path": ["logs"]
+            }
+          },
+          "response": [
+            {
+              "name": "202 - Log Accepted",
+              "status": "Accepted",
+              "code": 202,
+              "body": "{\n  \"message\": \"Log received and queued for processing\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Submit Log - Validation Error",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{logServiceUrl}}/logs",
+              "host": ["{{logServiceUrl}}"],
+              "path": ["logs"]
+            }
+          },
+          "response": [
+            {
+              "name": "400 - Validation Failed",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": {\n    \"message\": \"Validation failed\",\n    \"code\": 400,\n    \"details\": [\n      { \"field\": \"playerId\", \"message\": \"playerId cannot be empty\" },\n      { \"field\": \"logData\", \"message\": \"Required\" }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Health Checks",
+      "item": [
+        {
+          "name": "Player Service Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{playerServiceUrl}}/health", "host": ["{{playerServiceUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Score Service Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scoreServiceUrl}}/health", "host": ["{{scoreServiceUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Leaderboard Service Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{leaderboardServiceUrl}}/health", "host": ["{{leaderboardServiceUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Log Service Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{logServiceUrl}}/health", "host": ["{{logServiceUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

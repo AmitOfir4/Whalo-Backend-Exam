@@ -1,0 +1,1 @@
+{"root":["./src/index.ts","./src/config/db.ts","./src/middleware/error-handler.ts","./src/middleware/validate.ts","./src/types/log.types.ts","./src/types/player.types.ts","./src/types/score.types.ts"],"version":"5.9.3"}

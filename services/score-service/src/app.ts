@@ -1,0 +1,35 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import { connectDB, errorHandler } from '@whalo/shared';
+import scoreRoutes from './routes/score.routes';
+
+dotenv.config({ path: '../../.env' });
+
+const app = express();
+const PORT = process.env.SCORE_SERVICE_PORT || 3002;
+const MONGO_URI = process.env.MONGO_URI || '';
+
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+
+app.use('/scores', scoreRoutes);
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'score-service' });
+});
+
+app.use(errorHandler);
+
+async function start(): Promise<void> {
+  await connectDB(MONGO_URI);
+  app.listen(PORT, () => {
+    console.log(`Score Service running on port ${PORT}`);
+  });
+}
+
+start();
+
+export default app;

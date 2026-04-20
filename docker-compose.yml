@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: whalo-rabbitmq
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'check_port_connectivity']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whalo-network
+
+  # ── Microservices ───────────────────────────────────────────────
+  player-service:
+    build:
+      context: .
+      dockerfile: services/player-service/Dockerfile
+    container_name: whalo-player-service
+    ports:
+      - '3001:3001'
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      PLAYER_SERVICE_PORT: 3001
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
+  score-service:
+    build:
+      context: .
+      dockerfile: services/score-service/Dockerfile
+    container_name: whalo-score-service
+    ports:
+      - '3002:3002'
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      SCORE_SERVICE_PORT: 3002
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
+  leaderboard-service:
+    build:
+      context: .
+      dockerfile: services/leaderboard-service/Dockerfile
+    container_name: whalo-leaderboard-service
+    ports:
+      - '3003:3003'
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      LEADERBOARD_SERVICE_PORT: 3003
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
+  log-service:
+    build:
+      context: .
+      dockerfile: services/log-service/Dockerfile
+    container_name: whalo-log-service
+    ports:
+      - '3004:3004'
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      LOG_SERVICE_PORT: 3004
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
+  log-worker:
+    build:
+      context: .
+      dockerfile: services/log-worker/Dockerfile
+    container_name: whalo-log-worker
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      BATCH_SIZE: 50
+      BATCH_INTERVAL_MS: 2000
+      MAX_CONCURRENT_WRITES: 3
+      TOKEN_BUCKET_CAPACITY: 10
+      TOKEN_BUCKET_REFILL_RATE: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whalo-network
+    restart: unless-stopped
+
+networks:
+  whalo-network:
+    driver: bridge
