@@ -1,12 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { Score } from '../models/score.model';
 import { PlayerScore } from '../models/player-score.model';
-import { AppError, getRedis } from '@whalo/shared';
+import { AppError, getRedis, LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY } from '@whalo/shared';
 import mongoose from 'mongoose';
 
-const LEADERBOARD_KEY = 'leaderboard';
-const USERNAMES_KEY = 'leaderboard:usernames';
-const TOP10_CACHE_KEY = 'top10scores';
 const TOP10_TTL = 10; // seconds
 
 export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void> {

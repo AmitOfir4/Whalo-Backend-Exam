@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Player } from '../models/player.model';
 import { AppError } from '@whalo/shared';
 import mongoose from 'mongoose';
+import { publishPlayerEvent } from '../queue/publisher';
 
 export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -103,6 +104,8 @@ export async function deletePlayer(req: Request, res: Response, next: NextFuncti
     if (!player) {
       throw new AppError('Player not found', 404);
     }
+
+    await publishPlayerEvent({ event: 'player.deleted', playerId });
 
     res.json({ message: 'Player deleted successfully' });
   } catch (error) {

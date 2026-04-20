@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
+import { startPlayerEventsConsumer } from './queue/consumer';
 
 dotenv.config({ path: '../../.env' });
 
@@ -11,6 +12,7 @@ const app = express();
 const PORT = process.env.SCORE_SERVICE_PORT || 3002;
 const MONGO_URI = process.env.MONGO_URI || '';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672';
 
 app.use(helmet());
 app.use(cors());
@@ -27,6 +29,7 @@ app.use(errorHandler);
 async function start(): Promise<void> {
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
+  await startPlayerEventsConsumer(RABBITMQ_URL);
   app.listen(PORT, () => {
     console.log(`Score Service running on port ${PORT}`);
   });

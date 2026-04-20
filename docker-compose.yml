@@ -44,6 +44,10 @@ services:
     environment:
       MONGO_URI: ${MONGO_URI}
       PLAYER_SERVICE_PORT: 3001
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     networks:
       - whalo-network
     restart: unless-stopped
@@ -60,8 +64,11 @@ services:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
       SCORE_SERVICE_PORT: 3002
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
     depends_on:
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - whalo-network

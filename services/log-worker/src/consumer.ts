@@ -1,7 +1,8 @@
 import amqplib, { ConsumeMessage } from 'amqplib';
 import { Batcher, BatcherConfig } from './strategies/batcher';
+import { LOGS_QUEUE } from '@whalo/shared';
 
-const QUEUE_NAME = 'logs_queue';
+const QUEUE_NAME = LOGS_QUEUE;
 
 export async function startConsumer(
   url: string,

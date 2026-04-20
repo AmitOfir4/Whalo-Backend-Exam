@@ -1,9 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { getRedis } from '@whalo/shared';
+import { getRedis, LEADERBOARD_KEY, USERNAMES_KEY } from '@whalo/shared';
 import mongoose from 'mongoose';
-
-const LEADERBOARD_KEY = 'leaderboard';
-const USERNAMES_KEY = 'leaderboard:usernames';
 
 /**
  * Backfill the Redis sorted set from MongoDB when Redis is cold (empty).
