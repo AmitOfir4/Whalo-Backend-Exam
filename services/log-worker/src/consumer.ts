@@ -1,6 +1,6 @@
 import amqplib, { ConsumeMessage } from 'amqplib';
 import { Batcher, BatcherConfig } from './strategies/batcher';
-import { LOGS_QUEUE } from '@whalo/shared';
+import { LOGS_QUEUE, QUEUE_MAX_PRIORITY } from '@whalo/shared';
 
 const QUEUE_NAME = LOGS_QUEUE;
 
@@ -11,7 +11,10 @@ export async function startConsumer(
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
 
-  await channel.assertQueue(QUEUE_NAME, { durable: true });
+  await channel.assertQueue(QUEUE_NAME, {
+    durable: true,
+    arguments: { 'x-max-priority': QUEUE_MAX_PRIORITY },
+  });
 
   // Prefetch controls how many unacknowledged messages the worker holds
   await channel.prefetch(config.batchSize * 2);

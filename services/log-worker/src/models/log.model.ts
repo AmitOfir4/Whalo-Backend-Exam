@@ -14,6 +14,11 @@ const logSchema = new Schema<LogDocument>(
       type: String,
       required: true,
     },
+    priority: {
+      type: String,
+      enum: ['low', 'normal', 'high'],
+      default: 'normal',
+    },
     receivedAt: {
       type: Date,
       required: true,

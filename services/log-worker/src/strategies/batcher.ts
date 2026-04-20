@@ -2,6 +2,7 @@ import { ConsumeMessage } from 'amqplib';
 import { Log } from '../models/log.model';
 import { TokenBucket } from './token-bucket';
 import { Semaphore } from './concurrency';
+import type { LogPriority } from '@whalo/shared';
 
 export interface BatcherConfig {
   batchSize: number;
@@ -15,24 +16,31 @@ interface BufferedMessage {
   data: {
     playerId: string;
     logData: string;
+    priority: LogPriority;
     receivedAt: string;
   };
   message: ConsumeMessage;
 }
+
+// High-priority logs flush at a smaller batch threshold so they don't wait
+const HIGH_PRIORITY_BATCH_DIVISOR = 5;
+const HIGH_PRIORITY_INTERVAL_DIVISOR = 4;
 
 /**
  * Batcher — Aggregates incoming log messages and flushes them to MongoDB
  * in batches using insertMany(), controlled by:
  *   - Token Bucket: limits how frequently batches can be written
  *   - Semaphore: limits how many parallel insertMany() calls can run
+ *   - Priority-aware flushing: high-priority logs trigger faster flushes
  *
  * Flush triggers:
- *   1. Buffer reaches batchSize threshold
+ *   1. Buffer reaches batchSize threshold (lower for high-priority)
  *   2. Timer reaches batchIntervalMs since last flush
  */
 export class Batcher {
   private buffer: BufferedMessage[] = [];
   private timer: NodeJS.Timeout | null = null;
+  private hasHighPriority: boolean = false;
   private readonly config: BatcherConfig;
   private readonly tokenBucket: TokenBucket;
   private readonly semaphore: Semaphore;
@@ -48,10 +56,23 @@ export class Batcher {
   add(data: BufferedMessage['data'], message: ConsumeMessage): void {
     this.buffer.push({ data, message });
 
-    if (this.buffer.length >= this.config.batchSize) {
+    if (data.priority === 'high') {
+      this.hasHighPriority = true;
+    }
+
+    // Use a smaller batch threshold when high-priority messages are present
+    const threshold = this.hasHighPriority
+      ? Math.max(1, Math.floor(this.config.batchSize / HIGH_PRIORITY_BATCH_DIVISOR))
+      : this.config.batchSize;
+
+    if (this.buffer.length >= threshold) {
       this.flush();
     } else if (!this.timer) {
-      this.timer = setTimeout(() => this.flush(), this.config.batchIntervalMs);
+      // Use a shorter interval when high-priority messages are waiting
+      const interval = this.hasHighPriority
+        ? Math.floor(this.config.batchIntervalMs / HIGH_PRIORITY_INTERVAL_DIVISOR)
+        : this.config.batchIntervalMs;
+      this.timer = setTimeout(() => this.flush(), interval);
     }
   }
 
@@ -65,6 +86,7 @@ export class Batcher {
 
     const batch = [...this.buffer];
     this.buffer = [];
+    this.hasHighPriority = false;
 
     try {
       // Acquire concurrency slot (wait if max parallel writes reached)
@@ -78,6 +100,7 @@ export class Batcher {
         const docs = batch.map((item) => ({
           playerId: item.data.playerId,
           logData: item.data.logData,
+          priority: item.data.priority || 'normal',
           receivedAt: new Date(item.data.receivedAt),
           processedAt: new Date(),
         }));

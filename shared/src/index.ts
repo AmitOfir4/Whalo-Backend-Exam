@@ -8,4 +8,5 @@ export { LOGS_QUEUE, PLAYER_EVENTS_QUEUE, SCORE_EVENTS_QUEUE } from './constants
 
 export type { IPlayer, CreatePlayerDto, UpdatePlayerDto } from './types/player.types';
 export type { IScore, CreateScoreDto, LeaderboardEntry, PaginationQuery } from './types/score.types';
-export type { ILog, CreateLogDto } from './types/log.types';
+export type { ILog, CreateLogDto, LogPriority } from './types/log.types';
+export { LOG_PRIORITY_MAP, QUEUE_MAX_PRIORITY } from './types/log.types';

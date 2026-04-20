@@ -7,4 +7,8 @@ export const createLogSchema = z.object({
   logData: z
     .string({ required_error: 'logData is required' })
     .min(1, 'logData cannot be empty'),
+  priority: z
+    .enum(['low', 'normal', 'high'])
+    .optional()
+    .default('normal'),
 });
