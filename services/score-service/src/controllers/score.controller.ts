@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { Score } from '../models/score.model';
+import { PlayerScore } from '../models/player-score.model';
 import { AppError } from '@whalo/shared';
 import mongoose from 'mongoose';
 
@@ -7,13 +8,25 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
   try {
     const { playerId, score } = req.body;
 
-    // Verify the player exists in the players collection
-    const playerExists = await mongoose.connection.db!.collection('players').findOne({ playerId });
+    // Verify the player exists — projection limits returned data to just _id
+    const playerExists = await mongoose.connection.db!.collection('players').findOne(
+      { playerId },
+      { projection: { _id: 1 } }
+    );
     if (!playerExists) {
       throw new AppError('Player not found', 404);
     }
 
-    const newScore = await Score.create({ playerId, score });
+    // Insert individual score and atomically update aggregated totals in parallel
+    const [newScore] = await Promise.all([
+      Score.create({ playerId, score }),
+      PlayerScore.updateOne(
+        { playerId },
+        { $inc: { totalScore: score, gamesPlayed: 1 } },
+        { upsert: true }
+      ),
+    ]);
+
     res.status(201).json(newScore.toJSON());
   } catch (error) {
     next(error);

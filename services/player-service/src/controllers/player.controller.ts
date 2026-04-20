@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { Player } from '../models/player.model';
 import { AppError } from '@whalo/shared';
+import mongoose from 'mongoose';
 
 export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -17,6 +18,14 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
     }
 
     const player = await Player.create({ username, email });
+
+    // Seed an entry in playerscores so the player appears on the leaderboard immediately
+    await mongoose.connection.db!.collection('playerscores').insertOne({
+      playerId: player.playerId,
+      totalScore: 0,
+      gamesPlayed: 0,
+    });
+
     res.status(201).json(player.toJSON());
   } catch (error) {
     next(error);

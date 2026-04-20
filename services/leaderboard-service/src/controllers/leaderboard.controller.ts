@@ -7,25 +7,18 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
     const limit = Number(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const scoresCollection = mongoose.connection.db!.collection('scores');
+    const playerScoresCollection = mongoose.connection.db!.collection('playerscores');
 
-    const [results, countResult] = await Promise.all([
-      scoresCollection
+    const [results, totalPlayers] = await Promise.all([
+      playerScoresCollection
         .aggregate([
-          {
-            $group: {
-              _id: '$playerId',
-              totalScore: { $sum: '$score' },
-              gamesPlayed: { $sum: 1 },
-            },
-          },
           { $sort: { totalScore: -1 } },
           { $skip: skip },
           { $limit: limit },
           {
             $lookup: {
               from: 'players',
-              localField: '_id',
+              localField: 'playerId',
               foreignField: 'playerId',
               as: 'player',
             },
@@ -34,7 +27,7 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
           {
             $project: {
               _id: 0,
-              playerId: '$_id',
+              playerId: 1,
               username: { $ifNull: ['$player.username', 'Unknown'] },
               totalScore: 1,
               gamesPlayed: 1,
@@ -42,15 +35,9 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
           },
         ])
         .toArray(),
-      scoresCollection
-        .aggregate([
-          { $group: { _id: '$playerId' } },
-          { $count: 'total' },
-        ])
-        .toArray(),
+      playerScoresCollection.countDocuments(),
     ]);
 
-    const totalPlayers = countResult[0]?.total || 0;
     const totalPages = Math.ceil(totalPlayers / limit);
 
     res.json({
