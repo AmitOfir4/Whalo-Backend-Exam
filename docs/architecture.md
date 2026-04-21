@@ -58,7 +58,7 @@ sequenceDiagram
     participant SS as Score Service
     participant Redis as Redis
     participant RMQ as RabbitMQ
-    participant SW as Score Worker
+    participant SW as Score Worker (Batcher)
     participant DB as MongoDB
 
     C->>SS: POST /scores {playerId, score}
@@ -68,18 +68,22 @@ sequenceDiagram
         SS->>DB: findOne players {playerId}
         SS->>Redis: HSET leaderboard:usernames playerId username
     end
-    SS->>DB: Score.create({playerId, username, score})
-    SS->>RMQ: Publish score.submitted → score_events
-    SS-->>C: 202 Accepted
+    SS->>SS: Generate timestamp → scoreKey = playerId:timestamp
+    SS->>Redis: Lua ZADD top10scores:set + HSET top10scores:data (atomic, immediate)
+    SS->>RMQ: Publish score.submitted {playerId, username, score, timestamp}
+    SS-->>C: 202 Accepted {playerId, username, score}
 
-    Note over RMQ,SW: Asynchronous processing
+    Note over RMQ,SW: Asynchronous batch processing
 
-    RMQ->>SW: Deliver score.submitted
-    SW->>DB: updateOne playerscores {$inc: totalScore, gamesPlayed}
-    SW->>Redis: ZINCRBY leaderboard score playerId
-    SW->>Redis: DEL top10scores
-    SW->>RMQ: ACK message
+    RMQ->>SW: Buffer score.submitted messages
+    SW->>SW: Flush when batch full OR timer fires
+    SW->>DB: insertMany(scores batch)
+    SW->>DB: bulkWrite(playerscores $inc batch)
+    SW->>Redis: Pipeline ZINCRBY leaderboard + Lua top scores (idempotent — same scoreKey)
+    SW->>RMQ: ACK all messages in batch
 ```
+
+Note: The Lua script in both the service and the worker uses the same `scoreKey = playerId:timestamp`. Since `ZADD`/`HSET` are idempotent for the same member, the worker re-running the script on a redelivered message produces no duplicate entries.
 
 ---
 
@@ -140,6 +144,44 @@ sequenceDiagram
 
 ---
 
+## Score Worker Rate Control Strategies
+
+```mermaid
+graph LR
+    subgraph Input
+        MSG[Incoming Messages<br/>from RabbitMQ<br/>score_events queue]
+    end
+
+    subgraph Batcher["Batcher"]
+        BUF[Message Buffer]
+        TIMER[Flush Timer<br/>2 seconds]
+        SIZE[Size Threshold<br/>50 messages]
+    end
+
+    subgraph RateControl["Rate Control"]
+        SEM[Semaphore<br/>Max 3 concurrent writes]
+        TB[Token Bucket<br/>Capacity: 10<br/>Refill: 5/sec]
+    end
+
+    subgraph Output
+        DB1[(MongoDB scores<br/>insertMany)]
+        DB2[(MongoDB playerscores<br/>bulkWrite $inc)]
+        R1[(Redis<br/>ZINCRBY leaderboard<br/>+ Lua top scores)]
+    end
+
+    MSG --> BUF
+    BUF --> SIZE
+    BUF --> TIMER
+    SIZE -->|Flush| SEM
+    TIMER -->|Flush| SEM
+    SEM --> TB
+    TB --> DB1
+    TB --> DB2
+    TB --> R1
+```
+
+---
+
 ## Log Worker Rate Control Strategies
 
 ```mermaid
@@ -171,6 +213,38 @@ graph LR
     SEM --> TB
     TB --> DB
 ```
+
+---
+
+## Top Scores Read Path — Redis Sorted Set
+
+```mermaid
+graph LR
+    C[Client<br/>GET /scores/top]
+    subgraph ScoreService["Score Service"]
+        CW[Cold Start Check<br/>ZCARD top10scores:set]
+        HY[Hydrate from MongoDB<br/>top 10 scores]
+        ZR[ZREVRANGE top10scores:set<br/>0 9]
+        HM[HMGET top10scores:data<br/>...scoreKeys]
+    end
+    Redis[(Redis)]
+    DB[(MongoDB scores)]
+    RES[Response]
+
+    C --> CW
+    CW -->|size == 0| HY
+    HY --> DB
+    HY --> Redis
+    CW -->|size > 0| ZR
+    ZR --> Redis
+    ZR --> HM
+    HM --> Redis
+    HM --> RES
+```
+
+The top-scores sorted set is always up to date — no TTL expiry. It is updated atomically via a Lua script from two places:
+- **Score Service** (HTTP path) — immediately on score submission for instant visibility
+- **Score Worker** (async path) — idempotently on batch flush; same `scoreKey = playerId:timestamp` prevents duplicates
 
 ---
 
@@ -257,8 +331,8 @@ graph TB
         SS[score-service<br/>:3002]
         LS[leaderboard-service<br/>:3003]
         LGS[log-service<br/>:3004]
-        LW[log-worker]
-        SW[score-worker]
+        LW[log-worker<br/>SIGTERM/SIGINT graceful]
+        SW[score-worker<br/>SIGTERM/SIGINT graceful]
     end
 
     ATLAS[(MongoDB Atlas<br/>external)]

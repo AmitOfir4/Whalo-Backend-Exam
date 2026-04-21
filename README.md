@@ -9,10 +9,11 @@ Client → Player Service  (:3001)  → MongoDB Atlas
                                   → RabbitMQ (player_events) → Score Service (consumer)
                                                               → playerscores + Redis hash
 
-       → Score Service   (:3002)  → MongoDB Atlas (scores)
-                                  → Redis (username cache, top10 cache)
-                                  → RabbitMQ (score_events) → Score Worker
-                                                            → playerscores + Redis sorted set
+       → Score Service   (:3002)  → Redis (username cache)
+                                  → RabbitMQ (score_events) → Score Worker (Batcher)
+                                                            → insertMany scores
+                                                            → bulkWrite playerscores
+                                                            → Redis pipeline (leaderboard + top scores)
 
        → Leaderboard Service (:3003) → Redis (ZREVRANGE leaderboard sorted set)
                                      → MongoDB Atlas (cold-start backfill only)
@@ -23,11 +24,11 @@ Client → Player Service  (:3001)  → MongoDB Atlas
 | Service | Port | Description |
 |---------|------|-------------|
 | Player Service | 3001 | CRUD player profiles, publishes player lifecycle events |
-| Score Service | 3002 | Submit scores (202 async), get top 10 (Redis cached) |
+| Score Service | 3002 | Submit scores (202 — immediate top-scores update, full persistence async), get top 10 |
 | Leaderboard Service | 3003 | Redis sorted set leaderboard with pagination |
 | Log Service | 3004 | Receive logs → RabbitMQ priority queue (responds 202 instantly) |
 | Log Worker | — | Batch-writes logs from RabbitMQ to MongoDB |
-| Score Worker | — | Updates `playerscores` + Redis sorted set from `score_events` |
+| Score Worker | — | Batches `score_events` → `insertMany` scores, `bulkWrite` playerscores, Redis leaderboard + top scores |
 
 **Full architecture diagrams:** [docs/architecture.md](docs/architecture.md)
 
@@ -99,7 +100,7 @@ npm run dev:worker
 | PUT | `/players/:playerId` | Player | Update player |
 | DELETE | `/players/:playerId` | Player | Delete player |
 | POST | `/scores` | Score | Submit a score (202 async) |
-| GET | `/scores/top` | Score | Top 10 scores (Redis cached) |
+| GET | `/scores/top` | Score | Top 10 scores (Redis sorted set, always fresh) |
 | GET | `/players/leaderboard` | Leaderboard | Paginated leaderboard (Redis sorted set) |
 | POST | `/logs` | Log | Submit log (async, supports priority) |
 
@@ -124,14 +125,17 @@ The collection includes:
 
 ## Score Pipeline — Async Processing
 
-Score submission is fully async to keep the write path fast:
+Score submission is split between an immediate synchronous path and an async batch path:
 
-1. **Score Service** receives `POST /scores`, validates with Zod, checks player via Redis hash (falls back to MongoDB), persists the score to MongoDB, publishes `score.submitted` to `score_events` queue, responds `202 Accepted`
-2. **Score Worker** consumes `score_events` and in parallel:
-   - Updates `playerscores` collection (`$inc totalScore`, `$inc gamesPlayed`)
-   - Updates the Redis Sorted Set (`ZINCRBY leaderboard`)
-   - Invalidates the top10 cache (`DEL top10scores`)
-3. Messages are ACK'd only after all updates succeed (at-least-once delivery)
+1. **Score Service** receives `POST /scores`, validates with Zod, checks player via Redis hash (falls back to MongoDB), generates a `timestamp` → `scoreKey = playerId:timestamp`, then **in parallel**:
+   - Runs an atomic Lua script to update `top10scores:set` / `top10scores:data` in Redis **immediately** (instant top-scores visibility)
+   - Publishes `score.submitted` (with `timestamp`) to the `score_events` queue
+   - Responds `202 Accepted` with `{ playerId, username, score }`
+2. **Score Worker** buffers messages via a `Batcher` and on each flush runs **in parallel**:
+   - `insertMany` to the `scores` collection
+   - `bulkWrite` to the `playerscores` collection (`$inc totalScore`, `$inc gamesPlayed`)
+   - Redis pipeline: `ZINCRBY leaderboard` + same Lua script for top scores (idempotent — same `scoreKey` → no duplicates)
+3. Messages are ACK'd only after all writes succeed; on failure the whole batch is nack'd and requeued
 
 ---
 
@@ -180,7 +184,8 @@ The log system implements a production-grade async pipeline:
    - **Token Bucket**: Rate-limits write frequency (configurable capacity + refill rate)
    - **Semaphore**: Limits concurrent database write operations (default: max 3)
 3. Messages are only ACK'd after successful database write (at-least-once delivery)
-4. Workers can be scaled horizontally: `docker-compose up --scale log-worker=3`
+4. **Workers can be scaled horizontally**: `docker-compose up --scale log-worker=3` / `--scale score-worker=5`
+5. Both workers handle `SIGTERM` and `SIGINT` — they cancel their RabbitMQ consumer, flush/drain all in-progress writes, then exit cleanly
 
 ---
 

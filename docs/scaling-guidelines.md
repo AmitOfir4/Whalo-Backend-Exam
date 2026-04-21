@@ -83,13 +83,20 @@ POST /scores → Score Service → score_events queue → Score Worker
 - On cold start (empty sorted set) the leaderboard service backfills from the `playerscores` MongoDB collection
 - No TTL — the sorted set is the source of truth for rankings
 
-### Top Scores Cache
+### Top Scores (Redis Sorted Set — Always Fresh)
+The top-10 individual scores are maintained in a Redis Sorted Set (`top10scores:set`) and a companion Hash (`top10scores:data`). This is **not a cache with a TTL** — the sorted set is always up to date.
+
 ```
-GET /scores/top → Check Redis (top10scores) → if miss → MongoDB query → store in Redis (TTL: 10s)
+POST /scores → Score Service → Lua script: ZADD top10scores:set (immediate, on HTTP path)
+                             → score_events queue → Score Worker
+                               → Lua script: ZADD top10scores:set (idempotent, same scoreKey)
+
+GET /scores/top → ZREVRANGE top10scores:set 0 9 → HMGET top10scores:data (no MongoDB, no cache)
 ```
 
-- Cached with a 10-second TTL
-- Invalidated immediately when a new score is submitted or a username/player is updated
+- The Lua script is executed atomically in both the service (for immediate visibility) and the worker (for durability after batch write)
+- The same `scoreKey = playerId:timestamp` ensures both executions are idempotent — no duplicate entries
+- On cold start (empty sorted set after Redis restart), the service hydrates from MongoDB automatically via `hydrateTopScoresFromMongo()`
 
 ### Username Hash
 Usernames are cached in a Redis hash (`leaderboard:usernames`) for O(1) player existence checks and leaderboard reads without MongoDB lookups.
@@ -132,7 +139,7 @@ For high availability, deploy a RabbitMQ cluster with mirrored queues:
 - Configure `ha-mode: all` for high availability
 
 ### Tuning Worker Performance
-Adjust environment variables based on load:
+Both the **log worker** and **score worker** share the same configurable tuning variables:
 
 | Variable | Low Load | Medium Load | High Load |
 |----------|----------|-------------|-----------|
@@ -141,6 +148,8 @@ Adjust environment variables based on load:
 | MAX_CONCURRENT_WRITES | 1 | 3 | 10 |
 | TOKEN_BUCKET_CAPACITY | 5 | 10 | 50 |
 | TOKEN_BUCKET_REFILL_RATE | 2 | 5 | 20 |
+
+The score worker's batch flush runs `insertMany` (scores), `bulkWrite` (playerscores), and a Redis pipeline (leaderboard + top scores) all in parallel — so a larger `BATCH_SIZE` amortizes the cost of all three operations at once.
 
 ---
 
@@ -172,10 +181,11 @@ With Kubernetes or Docker Swarm:
 
 ### Key Metrics to Monitor
 - Request latency (p50, p95, p99) per service
-- RabbitMQ queue depth (indicates worker lag)
+- RabbitMQ queue depth for `score_events` and `logs_queue` (indicates worker lag)
 - MongoDB operation latency and connection pool usage
 - Error rates per endpoint
-- Log worker batch sizes and flush frequency
+- Log worker and score worker batch sizes and flush frequency
+- Worker graceful shutdown drain time (time between SIGTERM and process exit)
 
 ---
 

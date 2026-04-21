@@ -137,13 +137,17 @@ services:
     build:
       context: .
       dockerfile: services/score-worker/Dockerfile
-    container_name: whalo-score-worker
     ports:
-      - '9235:9235'
+      - '9235'
     environment:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      BATCH_SIZE: 50
+      BATCH_INTERVAL_MS: 2000
+      MAX_CONCURRENT_WRITES: 3
+      TOKEN_BUCKET_CAPACITY: 10
+      TOKEN_BUCKET_REFILL_RATE: 5
     depends_on:
       redis:
         condition: service_healthy
@@ -152,6 +156,8 @@ services:
     networks:
       - whalo-network
     restart: unless-stopped
+    deploy:
+      replicas: 3
 
 networks:
   whalo-network:

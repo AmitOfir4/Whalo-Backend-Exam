@@ -129,7 +129,7 @@ Delete a player profile.
 ## 2. Game Score Service
 
 ### POST /scores
-Submit a game score for a player. The score is persisted immediately and a `score.submitted` event is published to RabbitMQ for async aggregation by the score worker. Responds **202 Accepted** as the aggregation is handled asynchronously.
+Submit a game score for a player. The service immediately updates the top-scores Redis sorted set via an atomic Lua script for instant visibility, then publishes a `score.submitted` event to RabbitMQ. Score persistence to MongoDB and leaderboard aggregation are handled asynchronously by the Score Worker. Responds **202 Accepted**.
 
 **Request Body:**
 ```json
@@ -147,14 +147,23 @@ Submit a game score for a player. The score is persisted immediately and a `scor
 
 | Status | Description |
 |--------|-------------|
-| 202 | Score accepted and queued for async aggregation |
+| 202 | Score accepted — top scores updated immediately, full persistence async |
 | 400 | Validation failed |
 | 404 | Player not found |
+
+**Example Response (202):**
+```json
+{
+  "playerId": "550e8400-e29b-41d4-a716-446655440000",
+  "username": "playerone",
+  "score": 1500
+}
+```
 
 ---
 
 ### GET /scores/top
-Retrieve the top 10 highest individual scores. Results are cached in Redis with a 10-second TTL.
+Retrieve the top 10 highest individual scores. Results are served directly from a **Redis Sorted Set** (`top10scores:set`) + Hash (`top10scores:data`) — no MongoDB query, no TTL expiry. On cold start (empty sorted set) the service hydrates from MongoDB automatically.
 
 **Response (200):**
 ```json

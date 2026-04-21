@@ -34,5 +34,6 @@ const scoreSchema = new Schema<ScoreDocument>(
 
 scoreSchema.index({ score: -1 });
 scoreSchema.index({ playerId: 1, score: -1 });
+scoreSchema.index({ playerId: 1, createdAt: 1 }, { unique: true });
 
 export const Score = mongoose.model<ScoreDocument>('Score', scoreSchema);

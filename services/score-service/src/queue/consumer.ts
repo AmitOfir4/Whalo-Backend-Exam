@@ -14,13 +14,17 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
 
   console.log('Score service consuming from player_events queue');
 
-  channel.consume(QUEUE_NAME, async (msg) =>
+  let inFlight = 0;
+  let drainResolve: (() => void) | null = null;
+
+  const { consumerTag } = await channel.consume(QUEUE_NAME, async (msg) =>
   {
     if (!msg)
     {
       return;
     }
 
+    inFlight++;
     try
     {
       const data = JSON.parse(msg.content.toString());
@@ -87,11 +91,32 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
       // Requeue on failure so the message is not lost
       channel.nack(msg, false, true);
     }
+    finally
+    {
+      inFlight--;
+      if (inFlight === 0 && drainResolve)
+      {
+        drainResolve();
+        drainResolve = null;
+      }
+    }
   });
 
-  process.on('SIGINT', async () =>
+  async function gracefulShutdown(): Promise<void>
   {
+    console.log('Score service player_events consumer shutting down...');
+    await channel.cancel(consumerTag);
+    if (inFlight > 0)
+    {
+      await new Promise<void>((resolve) =>
+      {
+        drainResolve = resolve;
+      });
+    }
     await channel.close();
     await connection.close();
-  });
+  }
+
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
 }
