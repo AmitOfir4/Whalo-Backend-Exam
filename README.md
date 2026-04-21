@@ -131,11 +131,11 @@ Score submission is split between an immediate synchronous path and an async bat
    - Runs an atomic Lua script to update `top10scores:set` / `top10scores:data` in Redis **immediately** (instant top-scores visibility)
    - Publishes `score.submitted` (with `timestamp`) to the `score_events` queue
    - Responds `202 Accepted` with `{ playerId, username, score }`
-2. **Score Worker** buffers messages via a `Batcher` and on each flush runs **in parallel**:
-   - `insertMany` to the `scores` collection
-   - `bulkWrite` to the `playerscores` collection (`$inc totalScore`, `$inc gamesPlayed`)
-   - Redis pipeline: `ZINCRBY leaderboard` + same Lua script for top scores (idempotent — same `scoreKey` → no duplicates)
-3. Messages are ACK'd only after all writes succeed; on failure the whole batch is nack'd and requeued
+2. **Score Worker** buffers messages via a `Batcher` and on each flush:
+   - `insertMany({ordered:false})` to the `scores` collection — a unique compound index on `{ playerId, createdAt }` absorbs duplicate-key errors on retry, identifying only *genuinely new* inserts
+   - `bulkWrite` (`$inc totalScore`, `$inc gamesPlayed`) to `playerscores` **only for new inserts** — prevents double-counting on redelivery
+   - Redis pipeline: `ZINCRBY leaderboard` + same Lua top-scores script — also scoped to new inserts only
+3. Messages are ACK'd only after all writes succeed; on failure the whole batch is nack'd and requeued — retry is safe at all three layers (MongoDB unique index, scoped `$inc`, idempotent Lua script)
 
 ---
 

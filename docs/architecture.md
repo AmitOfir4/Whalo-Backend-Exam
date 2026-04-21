@@ -83,7 +83,11 @@ sequenceDiagram
     SW->>RMQ: ACK all messages in batch
 ```
 
-Note: The Lua script in both the service and the worker uses the same `scoreKey = playerId:timestamp`. Since `ZADD`/`HSET` are idempotent for the same member, the worker re-running the script on a redelivered message produces no duplicate entries.
+**Retry idempotency** is enforced at three independent layers when a batch is nack'd and redelivered:
+
+- **MongoDB scores** — a unique compound index on `{ playerId, createdAt }` causes `insertMany({ordered:false})` to absorb duplicate-key (11000) errors silently on retry. The response identifies which documents were *genuinely new* inserts vs. already-persisted duplicates.
+- **MongoDB playerscores** — `$inc` (totalScore, gamesPlayed) only runs for the genuinely new inserts identified above — preventing double-counting of totals on redelivery.
+- **Redis** — `ZINCRBY leaderboard` and the Lua top-scores script are also scoped to new inserts only. Additionally, the Lua script uses the same `scoreKey = playerId:timestamp` for both the service (immediate path) and the worker (async path); `ZADD` is idempotent for the same member so re-running the script never creates duplicate entries.
 
 ---
 
@@ -274,6 +278,8 @@ graph LR
     HM --> RES
 ```
 
+On cold start (empty sorted set after Redis restart), the leaderboard service re-populates from the `playerscores` MongoDB collection. A **distributed Redis lock** (`SET NX PX 30000`) ensures only one service instance runs the expensive backfill — concurrent instances detect the lock is held, wait 300 ms, and return; the next request hits the already-populated fast path.
+
 ---
 
 ## Database Schema
@@ -290,10 +296,10 @@ erDiagram
 
     SCORES {
         ObjectId _id PK
-        string playerId FK
+        string playerId FK "unique with createdAt"
         string username "denormalized"
         number score
-        datetime createdAt
+        datetime createdAt "unique with playerId"
     }
 
     PLAYERSCORES {

@@ -37,6 +37,7 @@ All microservices are designed to be **stateless** — they do not store session
 - `players.username` — unique index for duplicate detection
 - `scores.score` — descending index for top scores query
 - `scores.playerId` — index for per-player queries
+- `scores.{ playerId, createdAt }` — unique compound index; makes `insertMany` retries idempotent by absorbing duplicate-key errors so only genuinely new inserts drive `$inc` and Redis writes
 - `playerscores.totalScore` — descending index for aggregation fallback
 - `logs.playerId` — index for log filtering
 
@@ -81,6 +82,7 @@ POST /scores → Score Service → score_events queue → Score Worker
 - `ZINCRBY` updates the sorted set atomically and in O(log N)
 - `ZREVRANGE` serves paginated reads in O(log N + M)
 - On cold start (empty sorted set) the leaderboard service backfills from the `playerscores` MongoDB collection
+- A **distributed Redis lock** (`SET NX PX`) prevents thundering herd when multiple instances start simultaneously — only the lock holder runs the backfill; concurrent instances wait 300 ms and return
 - No TTL — the sorted set is the source of truth for rankings
 
 ### Top Scores (Redis Sorted Set — Always Fresh)

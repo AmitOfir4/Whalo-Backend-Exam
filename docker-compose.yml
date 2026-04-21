@@ -137,8 +137,9 @@ services:
     build:
       context: .
       dockerfile: services/score-worker/Dockerfile
+    container_name: whalo-score-worker
     ports:
-      - '9235'
+      - '9235:9235'
     environment:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
@@ -156,8 +157,6 @@ services:
     networks:
       - whalo-network
     restart: unless-stopped
-    deploy:
-      replicas: 3
 
 networks:
   whalo-network:

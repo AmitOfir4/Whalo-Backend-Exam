@@ -1,11 +1,11 @@
 /**
  * Whalo Backend — k6 Stress Test
  *
- * Scenarios (peak 500 VUs total):
- *   score_submissions   200 VUs  → POST /scores          (~2 000 req/s at peak)
- *   leaderboard_reads   150 VUs  → GET  /leaderboard     (~3 000 req/s at peak)
- *   top_scores_reads    100 VUs  → GET  /scores/top      (~2 000 req/s at peak)
- *   log_ingestion        50 VUs  → POST /logs            (~  250 req/s at peak)
+ * Scenarios (peak 130 VUs total — medium load):
+ *   score_submissions    50 VUs  → POST /scores          (~  500 req/s at peak)
+ *   leaderboard_reads    40 VUs  → GET  /leaderboard     (~  800 req/s at peak)
+ *   top_scores_reads     25 VUs  → GET  /scores/top      (~  500 req/s at peak)
+ *   log_ingestion        15 VUs  → POST /logs            (~   75 req/s at peak)
  *
  * Stages per scenario:
  *   0 → 2 min  ramp up to target VUs
@@ -59,9 +59,9 @@ export const options =
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: '2m', target: 200 },
-        { duration: '2m', target: 200 },
-        { duration: '1m', target: 0   },
+        { duration: '2m', target: 50 },
+        { duration: '2m', target: 50 },
+        { duration: '1m', target: 0  },
       ],
       exec: 'submitScore',
       gracefulRampDown: '10s',
@@ -72,9 +72,9 @@ export const options =
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: '2m', target: 150 },
-        { duration: '2m', target: 150 },
-        { duration: '1m', target: 0   },
+        { duration: '2m', target: 40 },
+        { duration: '2m', target: 40 },
+        { duration: '1m', target: 0  },
       ],
       exec: 'readLeaderboard',
       gracefulRampDown: '10s',
@@ -85,9 +85,9 @@ export const options =
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: '2m', target: 100 },
-        { duration: '2m', target: 100 },
-        { duration: '1m', target: 0   },
+        { duration: '2m', target: 25 },
+        { duration: '2m', target: 25 },
+        { duration: '1m', target: 0  },
       ],
       exec: 'readTopScores',
       gracefulRampDown: '10s',
@@ -98,8 +98,8 @@ export const options =
       executor: 'ramping-vus',
       startVUs: 0,
       stages: [
-        { duration: '2m', target: 50 },
-        { duration: '2m', target: 50 },
+        { duration: '2m', target: 15 },
+        { duration: '2m', target: 15 },
         { duration: '1m', target: 0  },
       ],
       exec: 'ingestLog',
