@@ -189,6 +189,70 @@ The log system implements a production-grade async pipeline:
 
 ---
 
+## Stress Test
+
+The repository includes a [k6](https://k6.io/) stress test that exercises all four services simultaneously with a 5-minute ramping load profile.
+
+### Scenarios (130 VUs peak)
+
+| Scenario | VUs | Target endpoint | Peak throughput |
+|---|---|---|---|
+| `score_submissions` | 50 | `POST /scores` | ~500 req/s |
+| `leaderboard_reads` | 40 | `GET /players/leaderboard` | ~800 req/s |
+| `top_scores_reads` | 25 | `GET /scores/top` | ~500 req/s |
+| `log_ingestion` | 15 | `POST /logs` | ~75 req/s |
+
+Each scenario ramps up over 2 minutes, holds for 2 minutes, then ramps down over 1 minute.
+
+### Thresholds
+
+The test fails if any of these are breached:
+- Global `p(95) < 2 s`, `p(99) < 5 s`
+- Error rate `< 5 %`
+- Leaderboard + top scores `p(95) < 500 ms`
+- Score submit `p(95) < 1.5 s`
+
+### Prerequisites
+
+```bash
+brew install k6   # macOS
+```
+
+All services must be running before starting the test:
+
+```bash
+docker compose up -d
+```
+
+### Run
+
+```bash
+# Simple run — results printed to terminal
+k6 run stress-test/stress.js
+
+# Or use the convenience wrapper (checks for k6, adds countdown)
+./stress-test/run.sh
+
+# Save a JSON summary alongside the terminal output
+./stress-test/run.sh --summary
+# → summary written to stress-test/results/summary-<timestamp>.json
+```
+
+### Override service URLs
+
+By default the test targets `localhost` on the standard ports. Override with environment variables:
+
+```bash
+k6 run \
+  -e PLAYER_URL=http://my-host:3001 \
+  -e SCORE_URL=http://my-host:3002 \
+  -e LEADERBOARD_URL=http://my-host:3003 \
+  -e LOG_URL=http://my-host:3004 \
+  stress-test/stress.js
+```
+
+---
+
 ## Scaling
 
 See [docs/scaling-guidelines.md](docs/scaling-guidelines.md) for detailed strategies covering:
