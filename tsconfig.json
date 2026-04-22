@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./shared" },
+    { "path": "./services/player-service" },
+    { "path": "./services/score-service" },
+    { "path": "./services/leaderboard-service" },
+    { "path": "./services/log-service" },
+    { "path": "./services/score-worker" },
+    { "path": "./services/log-worker" }
+  ]
+}

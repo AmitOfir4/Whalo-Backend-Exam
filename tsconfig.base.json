@@ -13,6 +13,10 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "moduleResolution": "node16"
+    "moduleResolution": "node16",
+    "paths": {
+      "@whalo/shared": ["./shared/src/index.ts"],
+      "@whalo/shared/*": ["./shared/src/*"]
+    }
   }
 }

@@ -1,0 +1,1 @@
+{"root":["./src/app.ts","./src/controllers/leaderboard.controller.ts","./src/routes/leaderboard.routes.ts","./src/validators/leaderboard.validator.ts"],"version":"6.0.3"}

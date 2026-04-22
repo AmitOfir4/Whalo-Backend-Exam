@@ -1,0 +1,1 @@
+{"root":["./src/app.ts","./src/controllers/score.controller.ts","./src/models/player-score.model.ts","./src/models/score.model.ts","./src/queue/consumer.ts","./src/queue/publisher.ts","./src/routes/score.routes.ts","./src/validators/score.validator.ts"],"version":"6.0.3"}

@@ -1,0 +1,1 @@
+{"root":["./src/app.ts","./src/controllers/player.controller.ts","./src/models/player.model.ts","./src/queue/publisher.ts","./src/routes/player.routes.ts","./src/validators/player.validator.ts"],"version":"6.0.3"}
