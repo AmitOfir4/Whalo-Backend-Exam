@@ -23,7 +23,6 @@ interface BufferedMessage
 {
   data: {
     playerId: string;
-    username: string;
     score: number;
     timestamp: number;
   };
@@ -142,7 +141,6 @@ export class Batcher
         //    errors on retry are absorbed rather than thrown.
         const scoreDocs = batch.map((item) => ({
           playerId: item.data.playerId,
-          username: item.data.username,
           score: item.data.score,
           createdAt: new Date(item.data.timestamp),
         }));

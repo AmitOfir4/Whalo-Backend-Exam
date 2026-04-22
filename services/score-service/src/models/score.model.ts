@@ -10,10 +10,6 @@ const scoreSchema = new Schema<ScoreDocument>(
       required: true,
       index: true,
     },
-    username: {
-      type: String,
-      required: true,
-    },
     score: {
       type: Number,
       required: true,

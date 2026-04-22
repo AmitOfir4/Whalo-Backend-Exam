@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Player } from '../models/player.model';
 import { AppError, throwConflictIfDuplicate } from '@whalo/shared';
 import { publishPlayerEvent } from '../queue/publisher';
-import type { ListPlayersQuery } from '../validators/player.validator';
+import type { ResolvePlayersQuery } from '../validators/player.validator';
 
 // Translate Mongo E11000 duplicate-key errors on players to 409 Conflict
 // with a meaningful, field-specific message.
@@ -65,31 +65,32 @@ export async function getPlayer(req: Request, res: Response, next: NextFunction)
   }
 }
 
-export async function getAllPlayers(req: Request, res: Response, next: NextFunction): Promise<void>
+// Batch-resolve playerIds → usernames. The only read path on GET /players.
+// Called by clients enriching leaderboard / top-scores rows with display
+// names: one request per page, not N. Response preserves the caller's
+// requested order so the caller doesn't need to re-zip with its own array;
+// unknown ids are silently omitted (the caller can render them as "Unknown"
+// or skip them).
+export async function resolvePlayersByIds(req: Request, res: Response, next: NextFunction): Promise<void>
 {
   try
   {
-    // validateQuery has already coerced and bounded these values.
-    const { page, limit } = req.query as unknown as ListPlayersQuery;
-    const skip = (page - 1) * limit;
+    // validateQuery has already parsed, deduped, and bounded this list.
+    const { ids } = req.query as unknown as ResolvePlayersQuery;
 
-    const [players, total] = await Promise.all([
-      Player.find().sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Player.estimatedDocumentCount(),
-    ]);
+    const players = await Player.find(
+      { playerId: { $in: ids } },
+      { _id: 0, playerId: 1, username: 1 },
+    ).lean();
 
-    const totalPages = Math.ceil(total / limit);
-    res.json({
-      data: players.map((player) => player.toJSON()),
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
-      },
-    });
+    const byId = new Map<string, { playerId: string; username: string }>(
+      players.map((p) => [p.playerId, { playerId: p.playerId, username: p.username }]),
+    );
+    const ordered = ids
+      .map((id) => byId.get(id))
+      .filter((p): p is { playerId: string; username: string } => p !== undefined);
+
+    res.json({ data: ordered });
   }
   catch (error)
   {

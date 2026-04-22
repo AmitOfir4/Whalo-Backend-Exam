@@ -82,7 +82,7 @@ npm run dev:score-worker    # score worker
 | Method | Endpoint | Service | Notes |
 |---|---|---|---|
 | POST | `/players` | Player | `201` on success |
-| GET | `/players` | Player | Paginated (`?page=&limit=`, max 100) |
+| GET | `/players?ids=id1,id2,...` | Player | Batch-resolve playerIds → usernames (deduped, capped at 100). No "list all players" shape is exposed. |
 | GET | `/players/:playerId` | Player | |
 | PUT | `/players/:playerId` | Player | Publishes `player.username_updated` when applicable |
 | DELETE | `/players/:playerId` | Player | Publishes `player.deleted` |
@@ -104,13 +104,13 @@ POST /scores
   │
   ▼
 Score Service
-  ├─▶ Redis HGET leaderboard:usernames   (Mongo fallback on miss, then HSET to warm)
+  ├─▶ Redis SISMEMBER players:known      (Mongo fallback on miss via distributed-locked hydration)
   ├─▶ scoreKey = playerId:timestamp
   ├─▶ Publish score.submitted → score_events
   ├─▶ Redis (in parallel):                                ← instant visibility
   │     ├─ Lua: ZADD top10scores:set + HSET top10scores:data
   │     └─ Lua: SET NX applied:leaderboard:<scoreKey> → ZINCRBY leaderboard
-  └─▶ 202 { playerId, username, score }
+  └─▶ 202 { playerId, score }
 
 Score Worker (batched)
   ├─▶ insertMany(scores, { ordered: false })              ← unique {playerId, createdAt} absorbs duplicates
@@ -135,11 +135,13 @@ Retry safety is enforced independently at four layers — redelivery is safe eve
 
 Player Service publishes lifecycle events; Score Service consumes them so denormalized state in `scores`, `playerscores`, and Redis stays consistent — without blocking the HTTP write path.
 
+Display names live exclusively in `player-service`. The score pipeline only needs to know *whether* a `playerId` is valid — never its name — so clients resolve usernames for leaderboard / top-score rows via a single batched `GET /players?ids=<id1>,<id2>,...` against `player-service`.
+
 | Event | Handler (Score Service consumer) |
 |---|---|
-| `player.created` | Upserts `playerscores` with `totalScore: 0`; `HSET leaderboard:usernames` |
-| `player.username_updated` | Cascades the new username to `scores`, `playerscores`, and the Redis username hash in parallel |
-| `player.deleted` | Deletes `playerscores`, all `scores`, `ZREM leaderboard`, `HDEL leaderboard:usernames`; runs an atomic Lua script that scans the ≤10-entry top-scores set and removes every `playerId:*` member from both the set and the data hash in one round-trip |
+| `player.created` | Upserts `playerscores` with `totalScore: 0`; `SADD players:known` |
+| `player.username_updated` | No-op — score pipeline never denormalizes the username, so renames are irrelevant here |
+| `player.deleted` | Deletes `playerscores`, all `scores`, `ZREM leaderboard`, `SREM players:known`; runs an atomic Lua script that scans the ≤10-entry top-scores set and removes every `playerId:*` member from both the set and the data hash in one round-trip |
 
 ---
 
@@ -169,7 +171,7 @@ Both workers **scale horizontally** (`docker compose up --scale log-worker=3 --s
 
 On an empty Redis sorted set (fresh boot or Redis restart), the Leaderboard Service backfills from `playerscores`. To avoid a thundering-herd where N instances all run the same expensive scan, the service takes a Redis `SET leaderboard:backfill:lock <instance> NX PX 30000` lock:
 
-- **Holder** — runs the backfill, populates the sorted set + username hash.
+- **Holder** — runs the backfill, populates the sorted set.
 - **Losers** — wait 300 ms then retry; by then the sorted set is warm and they hit the fast path.
 
 The lock is released on completion; the 30s TTL is a safety net against crashes.

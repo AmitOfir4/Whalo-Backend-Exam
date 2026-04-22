@@ -55,45 +55,40 @@ Create a new player profile.
 
 ---
 
-### GET /players
-Retrieve player profiles sorted by `createdAt` descending (newest first). Paginated.
+### GET /players?ids=...
+Batch-resolve a set of `playerId`s to their display names. This is the only shape `GET /players` supports — there is deliberately no "list all players" endpoint; no product surface needs a full player dump and omitting it keeps the service cheaper to operate.
+
+Used by clients immediately after pulling a `/scores/top` or `/players/leaderboard` page (both return `playerId` only) to hydrate names in a single round-trip — not N parallel `GET /players/:playerId` calls.
 
 **Query Parameters:**
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `page` | number | `1` | Page number (1-indexed) |
-| `limit` | number | `20` | Results per page (min 1, max 100) |
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ids` | string | yes | Comma-separated `playerId` list. Deduplicated server-side, capped at 100 entries. |
 
 **Responses:**
 
 | Status | Description |
 |--------|-------------|
-| 200 | Paginated players envelope |
-| 400 | Validation failed (`page` / `limit` out of range) |
+| 200 | `{data: [{playerId, username}]}`. Response order mirrors request order; unknown IDs are silently omitted. |
+| 400 | `ids` missing, empty, or exceeds 100 entries. |
+
+**Example Request:**
+```
+GET /players?ids=abc-123,def-456,ghi-789
+```
 
 **Example Response (200):**
 ```json
 {
   "data": [
-    {
-      "playerId": "550e8400-e29b-41d4-a716-446655440000",
-      "username": "playerone",
-      "email": "player1@example.com",
-      "createdAt": "2026-04-19T10:00:00.000Z",
-      "updatedAt": "2026-04-19T10:00:00.000Z"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 57,
-    "totalPages": 3,
-    "hasNextPage": true,
-    "hasPreviousPage": false
-  }
+    { "playerId": "abc-123", "username": "playerone" },
+    { "playerId": "def-456", "username": "playertwo" }
+  ]
 }
 ```
+
+In this example `ghi-789` didn't match a player and was dropped from the response. Clients can detect the missing ID by diffing request order against the returned `data` array.
 
 ---
 
@@ -151,7 +146,7 @@ Delete a player profile.
 ### POST /scores
 Submit a game score for a player. Responds **`202 Accepted`** — durable persistence is async.
 
-After validation and resolving the player's username (Redis cache → MongoDB fallback), the service:
+After validating the request and confirming the player exists via a single `SISMEMBER players:known` (with a one-time MongoDB-backed cold-start hydration of the set, guarded by a distributed lock), the service:
 
 1. Publishes a `score.submitted` event to the `score_events` RabbitMQ queue.
 2. Updates **both Redis read paths synchronously, in parallel**, using two idempotent Lua scripts:
@@ -186,10 +181,11 @@ The Score Worker still re-runs the same two scripts when it processes the messag
 ```json
 {
   "playerId": "550e8400-e29b-41d4-a716-446655440000",
-  "username": "playerone",
   "score": 1500
 }
 ```
+
+> Display names are not returned here — clients resolve them in batch via `GET /players?ids=...` against `player-service` when needed.
 
 ---
 
@@ -201,12 +197,13 @@ Retrieve the top 10 highest individual scores. Results are served directly from 
 [
   {
     "playerId": "abc-123",
-    "username": "PlayerOne",
     "score": 5000,
     "createdAt": "2026-04-19T10:00:00.000Z"
   }
 ]
 ```
+
+> The response carries `playerId` only. Clients render display names by calling `GET /players?ids=abc-123,def-456,...` once after this response arrives.
 
 ---
 
@@ -228,7 +225,6 @@ Retrieve players sorted by their total aggregated score. Rankings are served fro
   "data": [
     {
       "playerId": "abc-123",
-      "username": "playerone",
       "totalScore": 8500
     }
   ],
@@ -242,6 +238,8 @@ Retrieve players sorted by their total aggregated score. Rankings are served fro
   }
 }
 ```
+
+> As with `/scores/top`, only `playerId` and the numeric score are returned. Leaderboard-service deliberately does not read the `players` collection — the client fans the `playerId` list out to `GET /players?ids=...` on `player-service` to resolve display names in a single additional round-trip.
 
 ---
 

@@ -3,7 +3,7 @@ import { Score } from '../models/score.model';
 import {
   AppError,
   getRedis,
-  USERNAMES_KEY,
+  PLAYERS_KNOWN_KEY,
   TOP_SCORES_SET,
   TOP_SCORES_DATA,
   withDistributedLock,
@@ -17,6 +17,10 @@ const TOP_SCORES_HYDRATE_LOCK_KEY = 'top-scores:hydrate:lock';
 const TOP_SCORES_HYDRATE_LOCK_TTL_MS = 30_000;
 const TOP_SCORES_HYDRATE_LOCK_WAIT_MS = 300;
 
+const KNOWN_PLAYERS_HYDRATE_LOCK_KEY = 'players-known:hydrate:lock';
+const KNOWN_PLAYERS_HYDRATE_LOCK_TTL_MS = 30_000;
+const KNOWN_PLAYERS_HYDRATE_LOCK_WAIT_MS = 300;
+
 export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void>
 {
   try
@@ -24,32 +28,17 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
     const { playerId, score } = req.body;
     const redis = getRedis();
 
-    // Check player existence: Redis cache first, then MongoDB fallback
-    let username = await redis.hget(USERNAMES_KEY, playerId);
-
-    if (!username)
+    await ensureKnownPlayersPopulated();
+    const isKnown = await redis.sismember(PLAYERS_KNOWN_KEY, playerId);
+    if (!isKnown)
     {
-      const player = await mongoose.connection.db!.collection('players').findOne(
-        { playerId },
-        { projection: { _id: 0, username: 1 } }
-      );
-      if (!player)
-      {
-        throw new AppError('Player not found', 404);
-      }
-      username = player.username;
-      // Cache the username for future lookups
-      await redis.hset(USERNAMES_KEY, playerId, username!);
+      throw new AppError('Player not found', 404);
     }
 
     // Generate the timestamp here so both the HTTP path and the worker share
     // the same scoreKey — avoiding duplicate entries in the sorted set.
     const timestamp = Date.now();
     const scoreKey = `${playerId}:${timestamp}`;
-    // Top-scores metadata is immutable: only fields that can never change for a
-    // given scoreKey are denormalized here. Username is intentionally excluded
-    // and resolved at read time from USERNAMES_KEY (see getTopScores) so a
-    // rename is a single HSET instead of a cascade across every top-10 blob.
     const metadata = JSON.stringify(
     {
       playerId,
@@ -60,7 +49,7 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
     // Publish the event — durable score persistence (insertMany into scores
     // + $inc on playerscores) is still handled by the score-worker, keeping
     // the HTTP path non-blocking.
-    await publishScoreEvent({ event: 'score.submitted', playerId, username: username!, score, timestamp });
+    await publishScoreEvent({ event: 'score.submitted', playerId, score, timestamp });
 
     // Update both Redis read paths synchronously so the client sees its
     // submission reflected immediately — without waiting for the worker to
@@ -103,7 +92,7 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
       evalIdempotentLeaderboardIncrement(redis, { playerId, score, scoreKey, ttlSeconds }),
     ]);
 
-    res.status(202).json({ playerId, username, score });
+    res.status(202).json({ playerId, score });
   }
   catch (error)
   {
@@ -126,33 +115,13 @@ export async function getTopScores(_req: Request, res: Response, next: NextFunct
       return;
     }
 
-    // Fetch the immutable score metadata for each key from the hash.
+    // Fetch the immutable score metadata for each key from the hash. Clients
+    // resolve display names via GET /players?ids=... against player-service.
     const rawData = await redis.hmget(TOP_SCORES_DATA, ...topKeys);
 
-    const parsedScores = rawData
+    const topScores = rawData
       .filter((item): item is string => item !== null)
-      .map((item) =>
-      {
-        const { username: _ignored, ...rest } = JSON.parse(item) as { username?: string } & Record<string, unknown>;
-        return rest as { playerId: string; score: number; createdAt: string };
-      });
-
-    if (parsedScores.length === 0)
-    {
-      res.json([]);
-      return;
-    }
-
-    // Join current usernames from USERNAMES_KEY in a single round-trip.
-    const playerIds = parsedScores.map((s) => s.playerId);
-    const usernames = await redis.hmget(USERNAMES_KEY, ...playerIds);
-
-    const topScores = parsedScores.map((score, i) => ({
-      playerId: score.playerId,
-      username: usernames[i] || 'Unknown',
-      score: score.score,
-      createdAt: score.createdAt,
-    }));
+      .map((item) => JSON.parse(item) as { playerId: string; score: number; createdAt: string });
 
     res.json(topScores);
   }
@@ -212,19 +181,6 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
         return;
       }
 
-      // Resolve usernames from the players collection — the source of truth
-      // owned by player-service. scores.username is a historical snapshot
-      // (the username at the time the score was achieved) and would render
-      // stale names after a rename; pulling from players gives us the live
-      // username to seed USERNAMES_KEY with.
-      const playerIds = Array.from(new Set(topScores.map((entry) => entry.playerId)));
-      const players = await mongoose.connection.db!.collection('players')
-        .find({ playerId: { $in: playerIds } }, { projection: { _id: 0, playerId: 1, username: 1 } })
-        .toArray();
-      const usernameByPlayerId = new Map<string, string>(
-        players.map((p) => [p.playerId, p.username]),
-      );
-
       const pipeline = redis.pipeline();
 
       for (const entry of topScores)
@@ -240,15 +196,61 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
 
         pipeline.zadd(TOP_SCORES_SET, entry.score, scoreKey);
         pipeline.hset(TOP_SCORES_DATA, scoreKey, metadata);
-        const username = usernameByPlayerId.get(entry.playerId);
-        if (username)
-        {
-          pipeline.hset(USERNAMES_KEY, entry.playerId, username);
-        }
       }
 
       await pipeline.exec();
       console.log(`Hydrated ${topScores.length} top scores into Redis.`);
+    },
+  );
+}
+
+/**
+ * Cold-start hydration: populate the `players:known` Redis SET from the
+ * playerscores collection if it is empty. playerscores is owned by this
+ * service and contains a row for every player score-service has ever
+ * observed (upserted on the first `player.created` event), so it is the
+ * correct boundary-respecting source for this set. Under steady state
+ * the set is maintained incrementally by the player_events consumer;
+ * this function only matters after a Redis flush / cold start.
+ */
+export async function ensureKnownPlayersPopulated(): Promise<void>
+{
+  const redis = getRedis();
+
+  // Fast path — set already populated
+  const size = await redis.scard(PLAYERS_KNOWN_KEY);
+  if (size > 0)
+  {
+    return;
+  }
+
+  await withDistributedLock(
+    redis,
+    {
+      key: KNOWN_PLAYERS_HYDRATE_LOCK_KEY,
+      ttlMs: KNOWN_PLAYERS_HYDRATE_LOCK_TTL_MS,
+      waitOnContendedMs: KNOWN_PLAYERS_HYDRATE_LOCK_WAIT_MS,
+    },
+    async () =>
+    {
+      const sizeAfterLock = await redis.scard(PLAYERS_KNOWN_KEY);
+      if (sizeAfterLock > 0)
+      {
+        return;
+      }
+
+      const playerIds = await mongoose.connection.db!.collection('playerscores')
+        .find({}, { projection: { _id: 0, playerId: 1 } })
+        .toArray();
+
+      if (playerIds.length === 0)
+      {
+        return;
+      }
+
+      // SADD is variadic + O(N) — one round-trip for the whole backfill.
+      await redis.sadd(PLAYERS_KNOWN_KEY, ...playerIds.map((p) => p.playerId as string));
+      console.log(`Hydrated ${playerIds.length} known players into Redis.`);
     },
   );
 }

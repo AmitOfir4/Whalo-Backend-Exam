@@ -1,6 +1,5 @@
 export interface IScore {
   playerId: string;
-  username: string;
   score: number;
   createdAt: Date;
 }
@@ -12,7 +11,6 @@ export interface CreateScoreDto {
 
 export interface LeaderboardEntry {
   playerId: string;
-  username: string;
   totalScore: number;
 }
 

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getRedis, LEADERBOARD_KEY, USERNAMES_KEY, withDistributedLock } from '@whalo/shared';
+import { getRedis, LEADERBOARD_KEY, withDistributedLock } from '@whalo/shared';
 import mongoose from 'mongoose';
 
 const BACKFILL_LOCK_KEY = 'leaderboard:backfill:lock';
@@ -45,23 +45,13 @@ async function ensureLeaderboardPopulated(): Promise<void>
         return;
       }
 
-      const playerIds = allScores.map((doc) => doc.playerId);
-      const players = await db.collection('players')
-        .find({ playerId: { $in: playerIds } }, { projection: { _id: 0, playerId: 1, username: 1 } })
-        .toArray();
-      const usernameByPlayerId = new Map<string, string>(
-        players.map((p) => [p.playerId, p.username]),
-      );
-
+      // Leaderboard only stores { playerId → totalScore }. Display names are
+      // owned by player-service and resolved client-side via the batch
+      // GET /players?ids=... endpoint, so no cross-service read happens here.
       const pipeline = redis.pipeline();
       for (const doc of allScores)
       {
         pipeline.zadd(LEADERBOARD_KEY, doc.totalScore, doc.playerId);
-        const username = usernameByPlayerId.get(doc.playerId);
-        if (username)
-        {
-          pipeline.hset(USERNAMES_KEY, doc.playerId, username);
-        }
       }
       await pipeline.exec();
     },
@@ -84,27 +74,17 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
     // ZREVRANGE returns top players by totalScore — O(log N + M)
     const leaderboardRaw = await redis.zrevrange(LEADERBOARD_KEY, start, stop, 'WITHSCORES');
 
-    // Parse pairs: [playerId, score, playerId, score, ...]
-    const playerIds: string[] = [];
-    const scores: number[] = [];
+    // Parse pairs: [playerId, score, playerId, score, ...] into entry objects.
+    // Clients resolve display names by calling GET /players?ids=... on
+    // player-service with the playerIds from this response.
+    const results: { playerId: string; totalScore: number }[] = [];
     for (let i = 0; i < leaderboardRaw.length; i += 2)
     {
-      playerIds.push(leaderboardRaw[i]);
-      scores.push(Number(leaderboardRaw[i + 1]));
+      results.push({
+        playerId: leaderboardRaw[i],
+        totalScore: Number(leaderboardRaw[i + 1]),
+      });
     }
-
-    // Batch-fetch usernames from Redis hash
-    let usernames: (string | null)[] = [];
-    if (playerIds.length > 0)
-    {
-      usernames = await redis.hmget(USERNAMES_KEY, ...playerIds);
-    }
-
-    const results = playerIds.map((playerId, i) => ({
-      playerId,
-      username: usernames[i] || 'Unknown',
-      totalScore: scores[i],
-    }));
 
     const totalPlayers = await redis.zcard(LEADERBOARD_KEY);
     const totalPages = Math.ceil(totalPlayers / limit);

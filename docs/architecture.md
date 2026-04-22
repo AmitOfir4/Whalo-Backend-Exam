@@ -5,7 +5,8 @@ This document covers the runtime topology, the three async data flows (score, pl
 - **Async, bounded write paths** — `/scores` and `/logs` return `202` immediately and persist via a RabbitMQ → batch-worker pipeline, so HTTP latency is decoupled from DB write throughput.
 - **Redis is the source of truth for rankings** — the leaderboard sorted set and the top-10 set + hash are never TTL'd; MongoDB is the durable backup, not the read path.
 - **Idempotent by construction** — every redelivery-safe step is enforced by a Mongo unique index, a scoped `$inc`, or an idempotent Lua script.
-- **Eventually consistent fan-out** — `player.*` events propagate over RabbitMQ so score-service can update its denormalized state (`playerscores`, `scores.username`, Redis hashes) without being on the player-service's HTTP critical path.
+- **Eventually consistent fan-out** — `player.*` events propagate over RabbitMQ so score-service can update its denormalized state (`playerscores` aggregates, `players:known` existence set) without being on the player-service's HTTP critical path.
+- **No cross-service denormalization of display names** — scores and playerscores store `playerId` only. Clients resolve usernames for leaderboard / top-score rows with a single batched `GET /players?ids=id1,id2,...` against `player-service`.
 
 ## System Overview
 
@@ -41,8 +42,8 @@ graph TB
 
     PS -->|Read/Write players| MongoDB
     PS -->|Publish player_events| RMQ
-    SS -->|Read (player lookup + cold-start hydration)| MongoDB
-    SS -->|Username lookup| Redis
+    SS -->|Read (cold-start hydration of players:known + top-10)| MongoDB
+    SS -->|SISMEMBER players:known| Redis
     SS -->|Publish score_events| RMQ
     SS -->|Consume player_events| RMQ
     LS -->|ZREVRANGE leaderboard| Redis
@@ -71,19 +72,19 @@ sequenceDiagram
 
     C->>SS: POST /scores {playerId, score}
     SS->>SS: Validate with Zod
-    SS->>Redis: HGET leaderboard:usernames playerId
-    alt Username not cached
-        SS->>DB: findOne players {playerId}
-        SS->>Redis: HSET leaderboard:usernames playerId username
+    SS->>Redis: SISMEMBER players:known playerId
+    alt players:known empty (cold start)
+        SS->>DB: projection read of playerscores → SADD players:known
+        SS->>Redis: Retry SISMEMBER
     end
     SS->>SS: Generate timestamp → scoreKey = playerId:timestamp
-    SS->>RMQ: Publish score.submitted {playerId, username, score, timestamp}
+    SS->>RMQ: Publish score.submitted {playerId, score, timestamp}
     par Immediate Redis visibility (parallel)
         SS->>Redis: Lua ZADD top10scores:set + HSET top10scores:data
     and
         SS->>Redis: Lua SET NX applied:leaderboard:<scoreKey> → ZINCRBY leaderboard
     end
-    SS-->>C: 202 Accepted {playerId, username, score}
+    SS-->>C: 202 Accepted {playerId, score}
 
     Note over RMQ,SW: Asynchronous batch processing
 
@@ -125,15 +126,15 @@ sequenceDiagram
     PS-->>C: 201 Created
 
     RMQ->>SS: Deliver player.created
-    SS->>DB: upsert playerscores {playerId, username, totalScore:0}
-    SS->>Redis: HSET leaderboard:usernames playerId username
+    SS->>DB: upsert playerscores {playerId, totalScore:0, gamesPlayed:0}
+    SS->>Redis: SADD players:known playerId
 
-    Note over PS,SS: Same flow for player.username_updated and player.deleted
+    Note over PS,SS: player.deleted triggers tombstone-cascade; player.username_updated is a no-op here
 ```
 
-On `player.deleted` the consumer additionally runs an atomic Lua script that scans the (≤10 entry) `top10scores:set` sorted set and removes every `playerId:*` member from both the set and the `top10scores:data` hash in a single round-trip — ensuring the deleted player's individual score entries disappear from the top-scores read path immediately.
+On `player.deleted` the consumer removes `playerscores`, all `scores`, `ZREM leaderboard`, `SREM players:known`, and runs an atomic Lua script that scans the (≤10 entry) `top10scores:set` sorted set and removes every `playerId:*` member from both the set and the `top10scores:data` hash in a single round-trip — ensuring the deleted player's individual score entries disappear from the top-scores read path immediately.
 
-On `player.username_updated` the consumer cascades the new username to `scores`, `playerscores`, and the `leaderboard:usernames` Redis hash in parallel.
+`player.username_updated` is a registered no-op handler on the score-service consumer: the score pipeline never stores the username, so renames require no cascade. Clients always re-resolve display names against `player-service` via `GET /players?ids=...`, so the update is visible on the next read.
 
 ---
 
@@ -284,11 +285,10 @@ graph LR
         CW[Cold Start Check<br/>ZCARD leaderboard]
         BF[Backfill from<br/>playerscores collection]
         ZR[ZREVRANGE leaderboard<br/>start stop WITHSCORES]
-        HM[HMGET leaderboard:usernames<br/>...playerIds]
     end
     Redis[(Redis)]
     DB[(MongoDB<br/>playerscores)]
-    RES[Paginated Response]
+    RES[Paginated Response<br/>playerId + totalScore only]
 
     C --> CW
     CW -->|size == 0| BF
@@ -296,10 +296,10 @@ graph LR
     BF --> Redis
     CW -->|size > 0| ZR
     ZR --> Redis
-    ZR --> HM
-    HM --> Redis
-    HM --> RES
+    ZR --> RES
 ```
+
+Display names are resolved by the client via a single batched `GET /players?ids=...` against `player-service` after consuming the leaderboard response — keeping this service on a single data store (Redis) and off the `players` collection entirely.
 
 On cold start (empty sorted set after Redis restart), the leaderboard service re-populates from the `playerscores` MongoDB collection. A **distributed Redis lock** (`SET NX PX 30000`) ensures only one service instance runs the expensive backfill — concurrent instances detect the lock is held, wait 300 ms, and return; the next request hits the already-populated fast path.
 
@@ -320,7 +320,6 @@ erDiagram
     SCORES {
         ObjectId _id PK
         string playerId FK "unique with createdAt"
-        string username "denormalized"
         number score
         datetime createdAt "unique with playerId"
     }
@@ -328,7 +327,6 @@ erDiagram
     PLAYERSCORES {
         ObjectId _id PK
         string playerId UK "FK"
-        string username "denormalized"
         number totalScore "sum of all scores"
         number gamesPlayed "count of submissions"
     }

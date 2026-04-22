@@ -4,8 +4,7 @@ import {
   getRedis,
   PLAYER_EVENTS_QUEUE,
   LEADERBOARD_KEY,
-  USERNAMES_KEY,
-  TOP10_CACHE_KEY,
+  PLAYERS_KNOWN_KEY,
   TOP_SCORES_SET,
   TOP_SCORES_DATA,
   onShutdown,
@@ -44,28 +43,29 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
 
   const handlers: Record<string, EventHandler> =
   {
-    'player.created': async ({ playerId, username }) =>
+    'player.created': async ({ playerId }) =>
     {
-      // Seed playerscores totals and cache username — idempotent via upsert.
-      // playerscores no longer stores username: cold-start backfills read
-      // the current username from the players collection (source of truth).
+      // Seed playerscores totals and record the player as known in Redis —
+      // both idempotent (upsert + SADD). Score-service no longer tracks
+      // usernames: display names live exclusively in player-service and
+      // are resolved client-side via GET /players?ids=... .
       await Promise.all([
         mongoose.connection.db!.collection('playerscores').updateOne(
           { playerId },
           { $setOnInsert: { playerId, totalScore: 0, gamesPlayed: 0 } },
           { upsert: true }
         ),
-        getRedis().hset(USERNAMES_KEY, playerId, username),
+        getRedis().sadd(PLAYERS_KNOWN_KEY, playerId),
       ]);
 
       console.log(`Initialized data for new player: ${playerId}`);
     },
 
-    'player.username_updated': async ({ playerId, username }) =>
-    {
-      await getRedis().hset(USERNAMES_KEY, playerId, username);
-      console.log(`Updated username for player: ${playerId}`);
-    },
+    // Explicit no-op — username is no longer denormalised anywhere in the
+    // score pipeline, so renames are semantically irrelevant to this service.
+    // Registering the handler (rather than letting it fall through to the
+    // "Unknown event" branch) keeps logs clean and makes the intent explicit.
+    'player.username_updated': async () => { /* intentionally empty */ },
 
     'player.deleted': async ({ playerId }) =>
     {
@@ -96,8 +96,7 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
         mongoose.connection.db!.collection('playerscores').deleteOne({ playerId }),
         mongoose.connection.db!.collection('scores').deleteMany({ playerId }),
         redis.zrem(LEADERBOARD_KEY, playerId),
-        redis.hdel(USERNAMES_KEY, playerId),
-        redis.del(TOP10_CACHE_KEY),
+        redis.srem(PLAYERS_KNOWN_KEY, playerId),
         removePlayerTopScores,
       ]);
 

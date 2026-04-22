@@ -1,6 +1,10 @@
 export const LEADERBOARD_KEY = 'leaderboard';
-export const USERNAMES_KEY = 'leaderboard:usernames';
-export const TOP10_CACHE_KEY = 'top10scores';
+
+// Redis SET of playerIds known to score-service — populated by
+// `player.created` events and pruned by `player.deleted`. Used by the
+// score-submit path (SISMEMBER) to reject scores for nonexistent players
+// without crossing the player-service boundary for every submission.
+export const PLAYERS_KNOWN_KEY = 'players:known';
 
 // Top 10 individual scores — Redis sorted set + hash for O(log N) reads
 export const TOP_SCORES_SET = 'top10scores:set';   // ZSET: score → playerId:timestamp

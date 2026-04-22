@@ -79,6 +79,30 @@
           ]
         },
         {
+          "name": "Batch Resolve Usernames (GET /players?ids=...)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{playerServiceUrl}}/players?ids=abc-123,def-456",
+              "host": ["{{playerServiceUrl}}"],
+              "path": ["players"],
+              "query": [
+                { "key": "ids", "value": "abc-123,def-456", "description": "Comma-separated playerIds. Deduped, capped at 100." }
+              ]
+            },
+            "description": "Batch-resolve a set of playerIds to usernames. Used by clients after receiving a /scores/top or /players/leaderboard page (both return playerId only) to hydrate display names in a single round-trip."
+          },
+          "response": [
+            {
+              "name": "200 - Batch Resolution",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\" },\n    { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\" }\n  ]\n}"
+            }
+          ]
+        },
+        {
           "name": "Update Player",
           "request": {
             "method": "PUT",
@@ -168,10 +192,10 @@
           },
           "response": [
             {
-              "name": "201 - Score Submitted",
-              "status": "Created",
-              "code": 201,
-              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"score\": 1500,\n  \"createdAt\": \"2026-04-19T10:10:00.000Z\"\n}"
+              "name": "202 - Score Accepted",
+              "status": "Accepted",
+              "code": 202,
+              "body": "{\n  \"playerId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"score\": 1500\n}"
             }
           ]
         },
@@ -191,7 +215,7 @@
               "name": "200 - Top Scores",
               "status": "OK",
               "code": 200,
-              "body": "[\n  { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\", \"score\": 5000, \"createdAt\": \"2026-04-19T10:00:00.000Z\" },\n  { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\", \"score\": 4500, \"createdAt\": \"2026-04-19T10:05:00.000Z\" }\n]"
+              "body": "[\n  { \"playerId\": \"abc-123\", \"score\": 5000, \"createdAt\": \"2026-04-19T10:00:00.000Z\" },\n  { \"playerId\": \"def-456\", \"score\": 4500, \"createdAt\": \"2026-04-19T10:05:00.000Z\" }\n]"
             }
           ]
         }
@@ -220,7 +244,7 @@
               "name": "200 - Leaderboard",
               "status": "OK",
               "code": 200,
-              "body": "{\n  \"data\": [\n    { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\", \"totalScore\": 8500, \"gamesPlayed\": 5 },\n    { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\", \"totalScore\": 6200, \"gamesPlayed\": 3 }\n  ],\n  \"pagination\": {\n    \"page\": 1,\n    \"limit\": 10,\n    \"totalPlayers\": 50,\n    \"totalPages\": 5,\n    \"hasNextPage\": true,\n    \"hasPreviousPage\": false\n  }\n}"
+              "body": "{\n  \"data\": [\n    { \"playerId\": \"abc-123\", \"totalScore\": 8500 },\n    { \"playerId\": \"def-456\", \"totalScore\": 6200 }\n  ],\n  \"pagination\": {\n    \"page\": 1,\n    \"limit\": 10,\n    \"totalPlayers\": 50,\n    \"totalPages\": 5,\n    \"hasNextPage\": true,\n    \"hasPreviousPage\": false\n  }\n}"
             }
           ]
         },

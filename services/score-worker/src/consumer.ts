@@ -43,7 +43,6 @@ export async function startConsumer(url: string, config: BatcherConfig): Promise
       batcher.add(
         {
           playerId: data.playerId,
-          username: data.username,
           score: data.score,
           timestamp: data.timestamp ?? Date.now(),
         },
