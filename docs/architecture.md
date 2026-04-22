@@ -52,7 +52,8 @@ graph TB
     RMQ -->|Consume score_events| SW
     LW -->|Batch insertMany()| MongoDB
     SW -->|Update playerscores| MongoDB
-    SW -->|ZINCRBY leaderboard| Redis
+    SW -->|Idempotent Lua<br/>leaderboard + top-10| Redis
+    SS -.->|Idempotent Lua<br/>leaderboard + top-10<br/>(sync visibility)| Redis
 ```
 
 ---
@@ -76,8 +77,12 @@ sequenceDiagram
         SS->>Redis: HSET leaderboard:usernames playerId username
     end
     SS->>SS: Generate timestamp → scoreKey = playerId:timestamp
-    SS->>Redis: Lua ZADD top10scores:set + HSET top10scores:data (atomic, immediate)
     SS->>RMQ: Publish score.submitted {playerId, username, score, timestamp}
+    par Immediate Redis visibility (parallel)
+        SS->>Redis: Lua ZADD top10scores:set + HSET top10scores:data
+    and
+        SS->>Redis: Lua SET NX applied:leaderboard:<scoreKey> → ZINCRBY leaderboard
+    end
     SS-->>C: 202 Accepted {playerId, username, score}
 
     Note over RMQ,SW: Asynchronous batch processing
@@ -87,16 +92,19 @@ sequenceDiagram
     SW->>DB: insertMany(scores) ordered:false — absorb duplicate-key (11000) errors, identify new inserts
     alt newBatch has genuinely new inserts
         SW->>DB: bulkWrite(playerscores $inc totalScore/gamesPlayed) — new inserts only
-        SW->>Redis: Pipeline ZINCRBY leaderboard + Lua top scores — new inserts only
+        SW->>Redis: Pipeline — same top-10 + idempotent-leaderboard Lua scripts (no-ops if service already applied)
     end
     SW->>RMQ: ACK all messages in batch
 ```
 
-**Retry idempotency** is enforced at three independent layers when a batch is nack'd and redelivered:
+**Sync-visibility path.** Both Redis read paths are updated on the HTTP request so the client sees its submission reflected in `/scores/top` and `/players/leaderboard` before the worker ever touches the `score_events` queue. Without this, any queue backlog (e.g., under k6 load) would delay visible leaderboard totals by the full FIFO depth — users would submit a score and watch it apparently vanish until the worker caught up.
+
+**Retry idempotency** is enforced at four independent layers, so the service's sync writes *and* the worker's async retry writes can execute against the same message without corruption:
 
 - **MongoDB scores** — a unique compound index on `{ playerId, createdAt }` causes `insertMany({ordered:false})` to absorb duplicate-key (11000) errors silently on retry. The response identifies which documents were *genuinely new* inserts vs. already-persisted duplicates.
-- **MongoDB playerscores** — `$inc` (totalScore, gamesPlayed) only runs for the genuinely new inserts identified above — preventing double-counting of totals on redelivery.
-- **Redis** — `ZINCRBY leaderboard` and the Lua top-scores script are also scoped to new inserts only. Additionally, the Lua script uses the same `scoreKey = playerId:timestamp` for both the service (immediate path) and the worker (async path); `ZADD` is idempotent for the same member so re-running the script never creates duplicate entries.
+- **MongoDB playerscores** — `$inc` (`totalScore`, `gamesPlayed`) only runs for the genuinely new inserts identified above — preventing double-counting on redelivery.
+- **Top-10 Redis set** — the Lua script uses the same `scoreKey = playerId:timestamp` in both paths; `ZADD` / `HSET` for an identical member+score pair is a no-op.
+- **Leaderboard ZINCRBY** — `ZINCRBY` is not naturally idempotent, so the script gates it behind `SET applied:leaderboard:<scoreKey> NX EX <ttl>`. The first caller (whichever path runs first) creates the marker and applies the increment; the second caller sees the marker already exists and skips. The marker self-expires after `LEADERBOARD_APPLIED_TTL_SECONDS` (24h default), which must exceed the worst-case worker lag.
 
 ---
 
@@ -183,7 +191,7 @@ graph LR
     subgraph Output
         DB1[(MongoDB scores<br/>insertMany)]
         DB2[(MongoDB playerscores<br/>bulkWrite $inc)]
-        R1[(Redis<br/>ZINCRBY leaderboard<br/>+ Lua top scores)]
+        R1[(Redis<br/>Lua top-10<br/>+ Lua idempotent<br/>leaderboard ZINCRBY)]
     end
 
     MSG --> BUF

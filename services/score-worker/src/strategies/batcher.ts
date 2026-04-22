@@ -1,6 +1,12 @@
 import { ConsumeMessage } from 'amqplib';
 import mongoose from 'mongoose';
-import { getRedis, LEADERBOARD_KEY, TOP_SCORES_SET, TOP_SCORES_DATA } from '@whalo/shared';
+import {
+  getRedis,
+  TOP_SCORES_SET,
+  TOP_SCORES_DATA,
+  evalIdempotentLeaderboardIncrement,
+  resolveLeaderboardAppliedTtlSeconds,
+} from '@whalo/shared';
 import { TokenBucket } from './token-bucket';
 import { Semaphore } from './concurrency';
 
@@ -206,8 +212,17 @@ export class Batcher
           },
         }));
 
-        // 3. Redis ops — pipelined for genuinely new scores only
+        // 3. Redis ops — pipelined for genuinely new scores only.
+        //
+        //    Leaderboard ZINCRBY is run through an idempotent Lua script:
+        //    the Score Service already applied it synchronously on the HTTP
+        //    path so the client sees the new total immediately. The worker
+        //    re-runs the same script here so that if the service crashed
+        //    before publishing, or the sync path was skipped for any reason,
+        //    the leaderboard still catches up. The SET NX applied-marker
+        //    inside the script makes the second call a no-op.
         const pipeline = redis.pipeline();
+        const ttlSeconds = resolveLeaderboardAppliedTtlSeconds();
         for (const item of newBatch)
         {
           const scoreKey = `${item.data.playerId}:${item.data.timestamp}`;
@@ -219,7 +234,12 @@ export class Batcher
             createdAt: new Date(item.data.timestamp).toISOString(),
           });
 
-          pipeline.zincrby(LEADERBOARD_KEY, item.data.score, item.data.playerId);
+          evalIdempotentLeaderboardIncrement(pipeline, {
+            playerId: item.data.playerId,
+            score: item.data.score,
+            scoreKey,
+            ttlSeconds,
+          });
           pipeline.eval(
             TOP_SCORES_LUA,
             2,

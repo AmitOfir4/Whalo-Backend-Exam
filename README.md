@@ -97,7 +97,7 @@ Postman collection: [`postman/Whalo-Backend.postman_collection.json`](postman/Wh
 
 ---
 
-## The score pipeline — async, idempotent, three-layer safe
+## The score pipeline — sync visibility, async durability, four-layer safe
 
 ```
 POST /scores
@@ -106,23 +106,28 @@ POST /scores
 Score Service
   ├─▶ Redis HGET leaderboard:usernames   (Mongo fallback on miss, then HSET to warm)
   ├─▶ scoreKey = playerId:timestamp
-  ├─▶ Lua: ZADD top10scores:set + HSET top10scores:data   ← instant top-10 visibility
   ├─▶ Publish score.submitted → score_events
+  ├─▶ Redis (in parallel):                                ← instant visibility
+  │     ├─ Lua: ZADD top10scores:set + HSET top10scores:data
+  │     └─ Lua: SET NX applied:leaderboard:<scoreKey> → ZINCRBY leaderboard
   └─▶ 202 { playerId, username, score }
 
 Score Worker (batched)
   ├─▶ insertMany(scores, { ordered: false })              ← unique {playerId, createdAt} absorbs duplicates
   ├─▶ identify newBatch = non-duplicate inserts
   ├─▶ bulkWrite(playerscores $inc totalScore/gamesPlayed) ← scoped to newBatch only
-  ├─▶ Redis pipeline: ZINCRBY leaderboard + Lua top-10    ← scoped to newBatch only
+  ├─▶ Redis pipeline (same two Lua scripts as above)      ← scoped to newBatch, no-ops if service already applied
   └─▶ ACK the whole batch (NACK + requeue on any failure)
 ```
 
-Retry safety is enforced independently at each layer:
+The **service now updates both Redis read paths synchronously** so a client that submits a score during a stress-induced queue backlog sees its total reflected in `/players/leaderboard` and `/scores/top` *immediately* — previously the leaderboard had to wait for the worker to drain the entire FIFO queue ahead of the new message. The worker still re-runs both scripts on its own path to guarantee durability if the service ever crashes between publish and Redis write.
+
+Retry safety is enforced independently at four layers — redelivery is safe even if the service *and* the worker both run the Redis updates for the same message:
 
 - **MongoDB `scores`** — unique compound index on `{playerId, createdAt}` turns a redelivered message into a silent `E11000`; we filter the response down to genuinely new inserts.
 - **MongoDB `playerscores`** — `$inc` only runs for those new inserts, so `totalScore` / `gamesPlayed` never double-count on redelivery.
-- **Redis** — `ZINCRBY` and the top-10 Lua script are also scoped to new inserts. The script uses the same `scoreKey = playerId:timestamp` in both the HTTP and worker paths; `ZADD` for the same member is idempotent, so re-running never produces duplicates.
+- **Top-10 Redis set** — the Lua script uses the same `scoreKey = playerId:timestamp` in both paths; `ZADD` / `HSET` for an identical member+score pair is a no-op, so re-running never produces duplicates.
+- **Leaderboard ZINCRBY** — `ZINCRBY` is *not* idempotent, so the script gates it behind `SET applied:leaderboard:<scoreKey> NX EX <ttl>`. Whichever of the two paths runs first actually applies the increment; the other is a no-op. The marker self-expires after `LEADERBOARD_APPLIED_TTL_SECONDS` (24h default) so the applied set can't grow forever.
 
 ---
 
@@ -244,5 +249,6 @@ Override targets with `PLAYER_URL` / `SCORE_URL` / `LEADERBOARD_URL` / `LOG_URL`
 | `MAX_CONCURRENT_WRITES` | `3` | Semaphore cap — parallel DB writes |
 | `TOKEN_BUCKET_CAPACITY` | `10` | Token bucket burst capacity |
 | `TOKEN_BUCKET_REFILL_RATE` | `5` | Tokens refilled per second |
+| `LEADERBOARD_APPLIED_TTL_SECONDS` | `86400` | TTL (seconds) for the `applied:leaderboard:<scoreKey>` idempotency marker. Must exceed the worst-case `score_events` worker lag. |
 
 The log and score workers share the same four rate-control env vars.

@@ -9,8 +9,26 @@ export { onShutdown } from './utils/graceful-shutdown';
 export { isDuplicateKeyError, throwConflictIfDuplicate } from './utils/db-errors';
 export { withDistributedLock } from './utils/distributed-lock';
 export type { DistributedLockOptions } from './utils/distributed-lock';
+export {
+  IDEMPOTENT_LEADERBOARD_INCR_LUA,
+  DEFAULT_LEADERBOARD_APPLIED_TTL_SECONDS,
+  evalIdempotentLeaderboardIncrement,
+  resolveLeaderboardAppliedTtlSeconds,
+} from './utils/idempotent-leaderboard';
+export type {
+  LuaEvalTarget,
+  IdempotentLeaderboardIncrementArgs,
+} from './utils/idempotent-leaderboard';
 
-export { LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY, TOP_SCORES_SET, TOP_SCORES_DATA } from './constants/redis-keys';
+export {
+  LEADERBOARD_KEY,
+  USERNAMES_KEY,
+  TOP10_CACHE_KEY,
+  TOP_SCORES_SET,
+  TOP_SCORES_DATA,
+  APPLIED_LEADERBOARD_PREFIX,
+  appliedLeaderboardKey,
+} from './constants/redis-keys';
 export { LOGS_QUEUE, PLAYER_EVENTS_QUEUE, SCORE_EVENTS_QUEUE } from './constants/queue-names';
 
 export type { IPlayer, CreatePlayerDto, UpdatePlayerDto } from './types/player.types';

@@ -74,16 +74,24 @@ Redis is already integrated as a core part of the system, not an optional add-on
 The leaderboard is backed by a Redis Sorted Set — not MongoDB aggregation.
 
 ```
-POST /scores → Score Service → score_events queue → Score Worker
-  → ZINCRBY leaderboard <score> <playerId>   (real-time ranking update)
-  → updateOne playerscores                   (durable aggregation)
+POST /scores → Score Service
+  ├─ Publish score.submitted → score_events
+  └─ Lua: SET NX applied:leaderboard:<scoreKey> → ZINCRBY leaderboard   (sync, immediate visibility)
+
+                    │
+                    ▼  (async durability path)
+
+Score Worker → batched consume of score_events
+  ├─ insertMany scores + bulkWrite playerscores $inc                    (durable aggregation)
+  └─ Same idempotent Lua — no-op if service already applied             (catch-up if service crashed mid-request)
 ```
 
 - `ZINCRBY` updates the sorted set atomically and in O(log N)
 - `ZREVRANGE` serves paginated reads in O(log N + M)
+- The Score Service writes to the sorted set synchronously so visible ranking doesn't wait for queue drain under load; correctness is preserved by an **idempotency marker** (`applied:leaderboard:<scoreKey>`) that gates the `ZINCRBY` so both the service and the worker running the same script for the same message is safe. Marker TTL is configurable via `LEADERBOARD_APPLIED_TTL_SECONDS` — must exceed the worst-case worker lag (24h default is conservative for any realistic queue depth)
 - On cold start (empty sorted set) the leaderboard service backfills from the `playerscores` MongoDB collection
 - A **distributed Redis lock** (`SET NX PX`) prevents thundering herd when multiple instances start simultaneously — only the lock holder runs the backfill; concurrent instances wait 300 ms and return
-- No TTL — the sorted set is the source of truth for rankings
+- No TTL on the sorted set itself — it is the source of truth for rankings
 
 ### Top Scores (Redis Sorted Set — Always Fresh)
 The top-10 individual scores are maintained in a Redis Sorted Set (`top10scores:set`) and a companion Hash (`top10scores:data`). This is **not a cache with a TTL** — the sorted set is always up to date.

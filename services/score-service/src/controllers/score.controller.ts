@@ -7,6 +7,8 @@ import {
   TOP_SCORES_SET,
   TOP_SCORES_DATA,
   withDistributedLock,
+  evalIdempotentLeaderboardIncrement,
+  resolveLeaderboardAppliedTtlSeconds,
 } from '@whalo/shared';
 import mongoose from 'mongoose';
 import { publishScoreEvent } from '../queue/publisher';
@@ -52,41 +54,51 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
       createdAt: new Date(timestamp).toISOString(),
     });
 
-    // Publish the event — score persistence and leaderboard aggregation are
-    // handled entirely by the score-worker, keeping the HTTP path non-blocking.
+    // Publish the event — durable score persistence (insertMany into scores
+    // + $inc on playerscores) is still handled by the score-worker, keeping
+    // the HTTP path non-blocking.
     await publishScoreEvent({ event: 'score.submitted', playerId, username: username!, score, timestamp });
 
-    // Immediately update the top-scores sorted set so the leaderboard reflects
-    // this score right now — without waiting for the worker to drain the queue.
-    // The worker will run the same Lua script on the same scoreKey, which is
-    // idempotent (ZADD/HSET are no-ops for identical member+score pairs).
-    await redis.eval(
-      `
-      local setKey  = KEYS[1]
-      local hashKey = KEYS[2]
-      local score   = tonumber(ARGV[1])
-      local member  = ARGV[2]
-      local payload = ARGV[3]
+    // Update both Redis read paths synchronously so the client sees its
+    // submission reflected immediately — without waiting for the worker to
+    // drain the score_events queue. Both scripts are idempotent on the same
+    // scoreKey (`playerId:timestamp`), so when the worker later runs them
+    // on the same message they are safe no-ops:
+    //   - Top-10: ZADD / HSET for an identical member+score pair is a no-op.
+    //   - Leaderboard: the SET NX applied-marker gates the ZINCRBY, so the
+    //     second call (whichever path runs second) never double-increments.
+    // Running in parallel so the HTTP latency isn't serialised across both.
+    const ttlSeconds = resolveLeaderboardAppliedTtlSeconds();
+    await Promise.all([
+      redis.eval(
+        `
+        local setKey  = KEYS[1]
+        local hashKey = KEYS[2]
+        local score   = tonumber(ARGV[1])
+        local member  = ARGV[2]
+        local payload = ARGV[3]
 
-      redis.call('ZADD', setKey, score, member)
-      redis.call('HSET', hashKey, member, payload)
+        redis.call('ZADD', setKey, score, member)
+        redis.call('HSET', hashKey, member, payload)
 
-      local count = redis.call('ZCARD', setKey)
-      if count > 10 then
-        local evicted = redis.call('ZRANGE', setKey, 0, count - 11)
-        redis.call('ZREMRANGEBYRANK', setKey, 0, count - 11)
-        for _, k in ipairs(evicted) do redis.call('HDEL', hashKey, k) end
-      end
+        local count = redis.call('ZCARD', setKey)
+        if count > 10 then
+          local evicted = redis.call('ZRANGE', setKey, 0, count - 11)
+          redis.call('ZREMRANGEBYRANK', setKey, 0, count - 11)
+          for _, k in ipairs(evicted) do redis.call('HDEL', hashKey, k) end
+        end
 
-      return 1
-      `,
-      2,
-      TOP_SCORES_SET,
-      TOP_SCORES_DATA,
-      score,
-      scoreKey,
-      metadata,
-    );
+        return 1
+        `,
+        2,
+        TOP_SCORES_SET,
+        TOP_SCORES_DATA,
+        score,
+        scoreKey,
+        metadata,
+      ),
+      evalIdempotentLeaderboardIncrement(redis, { playerId, score, scoreKey, ttlSeconds }),
+    ]);
 
     res.status(202).json({ playerId, username, score });
   }

@@ -149,7 +149,18 @@ Delete a player profile.
 ## 2. Game Score Service
 
 ### POST /scores
-Submit a game score for a player. The service immediately updates the top-scores Redis sorted set via an atomic Lua script for instant visibility, then publishes a `score.submitted` event to RabbitMQ. Score persistence to MongoDB and leaderboard aggregation are handled asynchronously by the Score Worker. Responds **202 Accepted**.
+Submit a game score for a player. Responds **`202 Accepted`** — durable persistence is async.
+
+After validation and resolving the player's username (Redis cache → MongoDB fallback), the service:
+
+1. Publishes a `score.submitted` event to the `score_events` RabbitMQ queue.
+2. Updates **both Redis read paths synchronously, in parallel**, using two idempotent Lua scripts:
+   - Top-10 sorted set + hash (`top10scores:set` / `top10scores:data`).
+   - Leaderboard `ZINCRBY`, gated by `SET applied:leaderboard:<scoreKey> NX EX <ttl>` so repeated invocations for the same `scoreKey = playerId:timestamp` are no-ops.
+
+The client therefore sees its submission reflected in `GET /scores/top` and `GET /players/leaderboard` immediately, even when the Score Worker's queue is deeply backlogged.
+
+The Score Worker still re-runs the same two scripts when it processes the message, so the Redis writes survive a service crash between publish and Redis update. Durable persistence (`insertMany` into `scores` + `$inc` on `playerscores`) remains the worker's responsibility.
 
 **Request Body:**
 ```json
