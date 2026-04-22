@@ -1,5 +1,12 @@
 # Architecture
 
+This document covers the runtime topology, the three async data flows (score, player events, log), the retry-safety model, and the Redis / MongoDB layout. The design principles driving it are:
+
+- **Async, bounded write paths** — `/scores` and `/logs` return `202` immediately and persist via a RabbitMQ → batch-worker pipeline, so HTTP latency is decoupled from DB write throughput.
+- **Redis is the source of truth for rankings** — the leaderboard sorted set and the top-10 set + hash are never TTL'd; MongoDB is the durable backup, not the read path.
+- **Idempotent by construction** — every redelivery-safe step is enforced by a Mongo unique index, a scoped `$inc`, or an idempotent Lua script.
+- **Eventually consistent fan-out** — `player.*` events propagate over RabbitMQ so score-service can update its denormalized state (`playerscores`, `scores.username`, Redis hashes) without being on the player-service's HTTP critical path.
+
 ## System Overview
 
 ```mermaid
@@ -200,10 +207,10 @@ graph LR
         MSG[Incoming Messages<br/>from RabbitMQ]
     end
 
-    subgraph Batcher["Batcher"]
+    subgraph Batcher["Batcher (priority-aware)"]
         BUF[Message Buffer]
-        TIMER[Flush Timer<br/>2 seconds]
-        SIZE[Size Threshold<br/>50 messages]
+        TIMER[Flush Timer<br/>2s normal / 500ms if high-priority present]
+        SIZE[Size Threshold<br/>50 normal / 10 if high-priority present]
     end
 
     subgraph RateControl["Rate Control"]
@@ -223,6 +230,8 @@ graph LR
     SEM --> TB
     TB --> DB
 ```
+
+**Priority-aware flushing:** the log worker's batcher tracks whether any buffered message is `high` priority. When it is, the flush threshold shrinks by 5× (50 → 10) and the flush timer by 4× (2000 ms → 500 ms), so high-priority logs clear to MongoDB well ahead of the normal flush window.
 
 ---
 

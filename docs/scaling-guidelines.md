@@ -132,7 +132,9 @@ The `logs_queue` is declared with `x-max-priority: 3`, mapping to:
 | `normal` | 2         |
 | `low`    | 1         |
 
-High-priority logs are processed before lower-priority ones within the same consumer's prefetch window.
+High-priority logs are consumed before lower-priority ones within the same consumer's prefetch window.
+
+**Priority-aware flushing** on the worker side: when the log worker's buffer contains any `high` priority message, its flush threshold shrinks from `BATCH_SIZE` → `BATCH_SIZE / 5` and its flush interval from `BATCH_INTERVAL_MS` → `BATCH_INTERVAL_MS / 4`. High-priority logs therefore reach MongoDB well ahead of the normal flush window, even under moderate load — without sacrificing the throughput benefit of batching when only `normal`/`low` traffic is present.
 
 ### RabbitMQ Clustering
 For high availability, deploy a RabbitMQ cluster with mirrored queues:
@@ -224,7 +226,7 @@ With Kubernetes or Docker Swarm:
                                │  ECS         │  │  ECS         │
                                │  Log Workers │  │  Score       │
                                │  (scaled)    │  │  Workers     │
-                               └──────────────┘  └─────────────-┘
+                               └──────────────┘  └──────────────┘
 ```
 
 ### AWS Services Mapping

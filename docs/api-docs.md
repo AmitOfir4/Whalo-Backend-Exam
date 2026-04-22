@@ -2,16 +2,18 @@
 
 ## Overview
 
-The Whalo Mobile Game Backend consists of 4 API microservices and 2 background workers:
+The Whalo Mobile Game Backend is 4 HTTP microservices + 2 background workers talking over RabbitMQ.
 
 | Service | Base URL | Description |
 |---------|----------|-------------|
-| Player Management | `http://localhost:3001` | CRUD operations for player profiles |
-| Game Score | `http://localhost:3002` | Score submission and top scores |
-| Leaderboard | `http://localhost:3003` | Redis-powered leaderboard with pagination |
+| Player Management | `http://localhost:3001` | CRUD player profiles; publishes `player_events` on every mutation |
+| Game Score | `http://localhost:3002` | Score submission + top-10; also **consumes** `player_events` to keep denormalized state in sync |
+| Leaderboard | `http://localhost:3003` | Redis-powered paginated leaderboard with cold-start backfill guarded by a distributed lock |
 | Log Management | `http://localhost:3004` | Async log ingestion via RabbitMQ priority queue |
-| Score Worker | — | Processes `score_events` queue → updates `playerscores` + Redis |
-| Log Worker | — | Processes `logs_queue` → batch-writes to MongoDB |
+| Score Worker | — | Consumes `score_events` → batch-writes `scores`, `$inc` `playerscores`, updates Redis ranking sets |
+| Log Worker | — | Consumes `logs_queue` → batch `insertMany` into MongoDB (priority-aware flushing) |
+
+Write-heavy endpoints (`POST /scores`, `POST /logs`) return **`202 Accepted`** immediately and persist asynchronously via RabbitMQ → a batch worker. Retries are idempotent at every layer — unique Mongo indexes absorb duplicates, `$inc` and Redis writes are scoped to genuinely new inserts, and top-10 Lua scripts are idempotent for the same member.
 
 ---
 
@@ -54,25 +56,43 @@ Create a new player profile.
 ---
 
 ### GET /players
-Retrieve all player profiles.
+Retrieve player profiles sorted by `createdAt` descending (newest first). Paginated.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | number | `1` | Page number (1-indexed) |
+| `limit` | number | `20` | Results per page (min 1, max 100) |
 
 **Responses:**
 
 | Status | Description |
 |--------|-------------|
-| 200 | Array of player objects |
+| 200 | Paginated players envelope |
+| 400 | Validation failed (`page` / `limit` out of range) |
 
 **Example Response (200):**
 ```json
-[
-  {
-    "playerId": "550e8400-e29b-41d4-a716-446655440000",
-    "username": "playerone",
-    "email": "player1@example.com",
-    "createdAt": "2026-04-19T10:00:00.000Z",
-    "updatedAt": "2026-04-19T10:00:00.000Z"
+{
+  "data": [
+    {
+      "playerId": "550e8400-e29b-41d4-a716-446655440000",
+      "username": "playerone",
+      "email": "player1@example.com",
+      "createdAt": "2026-04-19T10:00:00.000Z",
+      "updatedAt": "2026-04-19T10:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 57,
+    "totalPages": 3,
+    "hasNextPage": true,
+    "hasPreviousPage": false
   }
-]
+}
 ```
 
 ---
@@ -217,7 +237,7 @@ Retrieve players sorted by their total aggregated score. Rankings are served fro
 ## 4. Log Management Service
 
 ### POST /logs
-Submit client log data. The endpoint responds immediately with 202 Accepted — actual log processing happens asynchronously via RabbitMQ and the log worker. Messages are routed through a **priority queue** (capacity 3); `high` priority messages are processed before `normal` and `low`.
+Submit client log data. The endpoint responds immediately with `202 Accepted` — actual log processing happens asynchronously via RabbitMQ and the log worker. Messages are routed through a **priority queue** (`x-max-priority: 3`); `high` priority messages are consumed before `normal` and `low` within each consumer's prefetch window. The log worker is also **priority-aware on the flush side**: when any buffered message is `high` priority, the flush threshold shrinks 5× and the flush timer 4× so high-priority logs reach MongoDB without waiting for the normal 50-message / 2-second window.
 
 **Request Body:**
 ```json

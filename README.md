@@ -1,172 +1,195 @@
 # Whalo Backend Exam — Mobile Game Microservices
 
-A Node.js/TypeScript microservices backend for a mobile game, featuring player management, game scores, leaderboards, and an async log ingestion pipeline.
+A Node.js / TypeScript microservices backend for a mobile game, built around four HTTP services and two background workers. It demonstrates event-driven design, retry-safe async pipelines, Redis-backed real-time rankings, and horizontally scalable workers with rate control.
 
-## Architecture
-
-```
-Client → Player Service  (:3001)  → MongoDB Atlas
-                                  → RabbitMQ (player_events) → Score Service (consumer)
-                                                              → playerscores + Redis hash
-
-       → Score Service   (:3002)  → Redis (username cache)
-                                  → RabbitMQ (score_events) → Score Worker (Batcher)
-                                                            → insertMany scores
-                                                            → bulkWrite playerscores
-                                                            → Redis pipeline (leaderboard + top scores)
-
-       → Leaderboard Service (:3003) → Redis (ZREVRANGE leaderboard sorted set)
-                                     → MongoDB Atlas (cold-start backfill only)
-
-       → Log Service     (:3004)  → RabbitMQ (logs_queue, priority queue) → Log Worker(s) → MongoDB Atlas
-```
-
-| Service | Port | Description |
-|---------|------|-------------|
-| Player Service | 3001 | CRUD player profiles, publishes player lifecycle events |
-| Score Service | 3002 | Submit scores (202 — immediate top-scores update, full persistence async), get top 10 |
-| Leaderboard Service | 3003 | Redis sorted set leaderboard with pagination |
-| Log Service | 3004 | Receive logs → RabbitMQ priority queue (responds 202 instantly) |
-| Log Worker | — | Batch-writes logs from RabbitMQ to MongoDB |
-| Score Worker | — | Batches `score_events` → `insertMany` scores, `bulkWrite` playerscores, Redis leaderboard + top scores |
-
-**Full architecture diagrams:** [docs/architecture.md](docs/architecture.md)
+- **Async write paths** — `/scores` and `/logs` return `202` immediately; persistence happens via RabbitMQ → batch worker.
+- **Redis is the source of truth for rankings** — MongoDB is only the durable backup + cold-start backfill.
+- **Idempotent by construction** — retries are safe at every layer (Mongo unique index, scoped `$inc`, idempotent Lua).
+- **Eventually consistent fan-out** — `player.*` events keep `scores`, `playerscores`, and Redis in sync without blocking the write path.
 
 ---
 
-## Tech Stack
+## Architecture at a glance
 
-- **Runtime**: Node.js 20 + TypeScript
-- **Framework**: Express.js
-- **Database**: MongoDB Atlas (via Mongoose)
-- **Cache & Ranking**: Redis 7 (sorted sets, hash, string cache)
-- **Message Broker**: RabbitMQ 3 (durable queues + priority queue)
-- **Validation**: Zod
-- **Containerization**: Docker + Docker Compose
-- **Monorepo**: npm workspaces
+```
+Client → Player Service      (:3001) → MongoDB
+                                      → RabbitMQ player_events ─┐
+                                                                │
+       → Score Service       (:3002) → Redis (immediate top-10 via Lua)
+                                      → RabbitMQ score_events ──┼─▶ Score Worker
+                                      ← RabbitMQ player_events ─┘       → insertMany scores
+                                                                        → bulkWrite playerscores ($inc)
+                                                                        → Redis ZINCRBY + Lua top-10
+
+       → Leaderboard Service (:3003) → Redis ZREVRANGE leaderboard
+                                      → MongoDB (cold-start backfill, guarded by distributed lock)
+
+       → Log Service         (:3004) → RabbitMQ logs_queue (x-max-priority=3) ─▶ Log Worker → MongoDB
+```
+
+| Service | Port | Responsibility |
+|---|---|---|
+| Player Service | 3001 | CRUD player profiles; publishes `player.created / username_updated / deleted` |
+| Score Service | 3002 | Accepts score submissions (`202`), serves top-10 from Redis, consumes `player_events` |
+| Leaderboard Service | 3003 | Paginated leaderboard served from a Redis sorted set |
+| Log Service | 3004 | Validates and fans log events into a priority queue (`202`) |
+| Score Worker | — | Batches `score_events` → durable writes + Redis ranking updates |
+| Log Worker | — | Batches `logs_queue` → `insertMany` to MongoDB |
+
+Full architecture diagrams, sequence flows, and schema: [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## Quick Start
+## Tech stack
 
-### Prerequisites
-- [Docker](https://www.docker.com/) and Docker Compose installed
+Node.js 20 · TypeScript (strict) · Express · MongoDB Atlas (Mongoose) · Redis 7 (sorted sets, hashes, Lua) · RabbitMQ 3 (durable + priority queues) · Zod · Docker Compose · npm workspaces.
 
-### Run with Docker
+---
+
+## Quick start
+
+### Docker (recommended)
 
 ```bash
-# Clone the repository
 git clone https://github.com/AmitOfir4/Whalo-Backend-Exam.git
 cd Whalo-Backend-Exam
-
-# Start all services
-docker-compose up --build
+cp .env.example .env                  # fill in MONGO_URI
+docker compose up --build
 ```
 
-This starts:
-- Redis on port `6379`
-- RabbitMQ on port `5672` (management UI: `http://localhost:15672`, guest/guest)
-- All 4 API services + log worker + score worker
+Starts Redis (`6379`), RabbitMQ (`5672`, UI on `15672` — guest/guest), all four API services, and both workers.
 
-### Run Locally (Development)
+### Local development
 
 ```bash
-# Install dependencies
 npm install
-
-# Build shared package
 npm run build --workspace=shared
-
-# Copy environment file
 cp .env.example .env
 
-# Start services individually (requires MongoDB + RabbitMQ running locally)
+# In separate terminals (requires MongoDB, Redis, RabbitMQ running locally):
 npm run dev:player
 npm run dev:score
 npm run dev:leaderboard
 npm run dev:log
-npm run dev:worker
+npm run dev:worker          # log worker
+npm run dev:score-worker    # score worker
 ```
 
 ---
 
-## API Endpoints
+## API surface
 
-| Method | Endpoint | Service | Description |
-|--------|----------|---------|-------------|
-| POST | `/players` | Player | Create player |
-| GET | `/players` | Player | List all players |
-| GET | `/players/:playerId` | Player | Get player by ID |
-| PUT | `/players/:playerId` | Player | Update player |
-| DELETE | `/players/:playerId` | Player | Delete player |
-| POST | `/scores` | Score | Submit a score (202 async) |
-| GET | `/scores/top` | Score | Top 10 scores (Redis sorted set, always fresh) |
-| GET | `/players/leaderboard` | Leaderboard | Paginated leaderboard (Redis sorted set) |
-| POST | `/logs` | Log | Submit log (async, supports priority) |
+| Method | Endpoint | Service | Notes |
+|---|---|---|---|
+| POST | `/players` | Player | `201` on success |
+| GET | `/players` | Player | Paginated (`?page=&limit=`, max 100) |
+| GET | `/players/:playerId` | Player | |
+| PUT | `/players/:playerId` | Player | Publishes `player.username_updated` when applicable |
+| DELETE | `/players/:playerId` | Player | Publishes `player.deleted` |
+| POST | `/scores` | Score | **202** — top-10 updated synchronously via Lua; durable write async |
+| GET | `/scores/top` | Score | Top 10 from Redis (`top10scores:set` + `top10scores:data`) |
+| GET | `/players/leaderboard` | Leaderboard | Paginated; O(log N + M) via `ZREVRANGE` |
+| POST | `/logs` | Log | **202** — routed through priority queue |
+| GET | `/health` | all | `{ status: "ok", service: "<name>" }` |
 
-**Full API documentation:** [docs/api-docs.md](docs/api-docs.md)
-
----
-
-## Postman Collection
-
-Import the Postman collection for ready-to-use API requests:
-
-📁 [`postman/Whalo-Backend.postman_collection.json`](postman/Whalo-Backend.postman_collection.json)
-
-The collection includes:
-- All endpoints with example request bodies
-- Auto-extraction of `playerId` from create response
-- Validation error examples
-- Health check requests
-- Collection variables for base URLs
+Full request/response reference: [docs/api-docs.md](docs/api-docs.md).
+Postman collection: [`postman/Whalo-Backend.postman_collection.json`](postman/Whalo-Backend.postman_collection.json).
 
 ---
 
-## Score Pipeline — Async Processing
+## The score pipeline — async, idempotent, three-layer safe
 
-Score submission is split between an immediate synchronous path and an async batch path:
+```
+POST /scores
+  │
+  ▼
+Score Service
+  ├─▶ Redis HGET leaderboard:usernames   (Mongo fallback on miss, then HSET to warm)
+  ├─▶ scoreKey = playerId:timestamp
+  ├─▶ Lua: ZADD top10scores:set + HSET top10scores:data   ← instant top-10 visibility
+  ├─▶ Publish score.submitted → score_events
+  └─▶ 202 { playerId, username, score }
 
-1. **Score Service** receives `POST /scores`, validates with Zod, checks player via Redis hash (falls back to MongoDB), generates a `timestamp` → `scoreKey = playerId:timestamp`, then **in parallel**:
-   - Runs an atomic Lua script to update `top10scores:set` / `top10scores:data` in Redis **immediately** (instant top-scores visibility)
-   - Publishes `score.submitted` (with `timestamp`) to the `score_events` queue
-   - Responds `202 Accepted` with `{ playerId, username, score }`
-2. **Score Worker** buffers messages via a `Batcher` and on each flush:
-   - `insertMany({ordered:false})` to the `scores` collection — a unique compound index on `{ playerId, createdAt }` absorbs duplicate-key errors on retry, identifying only *genuinely new* inserts
-   - `bulkWrite` (`$inc totalScore`, `$inc gamesPlayed`) to `playerscores` **only for new inserts** — prevents double-counting on redelivery
-   - Redis pipeline: `ZINCRBY leaderboard` + same Lua top-scores script — also scoped to new inserts only
-3. Messages are ACK'd only after all writes succeed; on failure the whole batch is nack'd and requeued — retry is safe at all three layers (MongoDB unique index, scoped `$inc`, idempotent Lua script)
+Score Worker (batched)
+  ├─▶ insertMany(scores, { ordered: false })              ← unique {playerId, createdAt} absorbs duplicates
+  ├─▶ identify newBatch = non-duplicate inserts
+  ├─▶ bulkWrite(playerscores $inc totalScore/gamesPlayed) ← scoped to newBatch only
+  ├─▶ Redis pipeline: ZINCRBY leaderboard + Lua top-10    ← scoped to newBatch only
+  └─▶ ACK the whole batch (NACK + requeue on any failure)
+```
+
+Retry safety is enforced independently at each layer:
+
+- **MongoDB `scores`** — unique compound index on `{playerId, createdAt}` turns a redelivered message into a silent `E11000`; we filter the response down to genuinely new inserts.
+- **MongoDB `playerscores`** — `$inc` only runs for those new inserts, so `totalScore` / `gamesPlayed` never double-count on redelivery.
+- **Redis** — `ZINCRBY` and the top-10 Lua script are also scoped to new inserts. The script uses the same `scoreKey = playerId:timestamp` in both the HTTP and worker paths; `ZADD` for the same member is idempotent, so re-running never produces duplicates.
 
 ---
 
-## Player Events — Async Propagation
+## Player events — fan-out that keeps everything in sync
 
-Player lifecycle changes propagate asynchronously via the `player_events` queue consumed by Score Service:
+Player Service publishes lifecycle events; Score Service consumes them so denormalized state in `scores`, `playerscores`, and Redis stays consistent — without blocking the HTTP write path.
 
-| Event | Effect |
-|-------|--------|
-| `player.created` | Seeds `playerscores` entry; caches username in Redis |
-| `player.username_updated` | Cascades new username to `scores`, `playerscores`, Redis hash |
-| `player.deleted` | Removes `playerscores`, all `scores`, Redis leaderboard entry, Redis username entry; atomically removes all `playerId:*` top-score entries from `top10scores:set` and `top10scores:data` via Lua script |
+| Event | Handler (Score Service consumer) |
+|---|---|
+| `player.created` | Upserts `playerscores` with `totalScore: 0`; `HSET leaderboard:usernames` |
+| `player.username_updated` | Cascades the new username to `scores`, `playerscores`, and the Redis username hash in parallel |
+| `player.deleted` | Deletes `playerscores`, all `scores`, `ZREM leaderboard`, `HDEL leaderboard:usernames`; runs an atomic Lua script that scans the ≤10-entry top-scores set and removes every `playerId:*` member from both the set and the data hash in one round-trip |
 
 ---
 
-## Project Structure
+## The log pipeline — async with priority
+
+```
+POST /logs {priority?: low|normal|high}
+  │
+  ▼
+Log Service → RabbitMQ logs_queue (x-max-priority=3) → 202 Accepted
+
+Log Worker (batched)
+  ├─▶ Batcher           — flush at BATCH_SIZE (50) or BATCH_INTERVAL_MS (2000ms)
+  ├─▶ Token Bucket      — capacity 10, refill 5/s — caps sustained write rate
+  ├─▶ Semaphore         — MAX_CONCURRENT_WRITES=3 — caps parallel Mongo writes
+  ├─▶ insertMany(logs, { ordered: false })
+  └─▶ ACK after successful write (at-least-once)
+```
+
+**Priority-aware flushing:** when any message in the buffer is `high` priority, the Log Worker shrinks its flush threshold by 5× and its timer by 4×, so high-priority logs clear the queue well before the normal 50-message / 2-second window closes.
+
+Both workers **scale horizontally** (`docker compose up --scale log-worker=3 --scale score-worker=5`) and handle `SIGTERM` / `SIGINT`: cancel the consumer, drain in-flight flushes, exit cleanly.
+
+---
+
+## Leaderboard cold-start — guarded with a distributed lock
+
+On an empty Redis sorted set (fresh boot or Redis restart), the Leaderboard Service backfills from `playerscores`. To avoid a thundering-herd where N instances all run the same expensive scan, the service takes a Redis `SET leaderboard:backfill:lock <instance> NX PX 30000` lock:
+
+- **Holder** — runs the backfill, populates the sorted set + username hash.
+- **Losers** — wait 300 ms then retry; by then the sorted set is warm and they hit the fast path.
+
+The lock is released on completion; the 30s TTL is a safety net against crashes.
+
+---
+
+## Project layout
 
 ```
 ├── services/
-│   ├── player-service/         # CRUD player profiles + player_events publisher
-│   ├── score-service/          # Score submission + top scores + player_events consumer
-│   ├── leaderboard-service/    # Redis sorted set leaderboard
-│   ├── log-service/            # HTTP → RabbitMQ priority queue publisher
-│   ├── log-worker/             # RabbitMQ consumer → MongoDB batch writer
-│   └── score-worker/           # score_events consumer → playerscores + Redis sorted set
-├── shared/                     # Shared types, DB/Redis helpers, middleware, constants
+│   ├── player-service/         # CRUD + player_events publisher
+│   ├── score-service/          # /scores + /scores/top + player_events consumer
+│   ├── leaderboard-service/    # /players/leaderboard (Redis ZREVRANGE + cold-start lock)
+│   ├── log-service/            # /logs → priority queue publisher
+│   ├── log-worker/             # logs_queue consumer → batched Mongo writes
+│   └── score-worker/           # score_events consumer → Mongo + Redis writes
+├── shared/                     # DB/Redis/RabbitMQ clients, Zod middleware,
+│                               # error handler, graceful-shutdown, distributed lock,
+│                               # queue/Redis-key constants, shared types
 ├── docs/
-│   ├── architecture.md         # Mermaid diagrams
+│   ├── architecture.md         # Mermaid diagrams + ER schema
 │   ├── api-docs.md             # Endpoint reference
 │   └── scaling-guidelines.md   # Scaling strategies
 ├── postman/                    # Postman collection
+├── stress-test/                # k6 load test + runner
 ├── docker-compose.yml
 ├── .env.example
 └── tsconfig.base.json
@@ -174,101 +197,41 @@ Player lifecycle changes propagate asynchronously via the `player_events` queue 
 
 ---
 
-## Log Pipeline — Async Processing
+## Stress test
 
-The log system implements a production-grade async pipeline:
+[k6](https://k6.io/) script that exercises all four services simultaneously with a ramping profile (5 min total, 130 VUs peak).
 
-1. **Log Service** receives `POST /logs` (with optional `priority`: `low | normal | high`), validates with Zod, publishes to RabbitMQ **priority queue** (`x-max-priority: 3`), responds `202 Accepted` immediately
-2. **Log Worker** consumes from RabbitMQ with three rate-control strategies:
-   - **Batcher**: Aggregates messages, flushes via `insertMany()` when buffer hits 50 messages or 2-second timer
-   - **Token Bucket**: Rate-limits write frequency (configurable capacity + refill rate)
-   - **Semaphore**: Limits concurrent database write operations (default: max 3)
-3. Messages are only ACK'd after successful database write (at-least-once delivery)
-4. **Workers can be scaled horizontally**: `docker-compose up --scale log-worker=3` / `--scale score-worker=5`
-5. Both workers handle `SIGTERM` and `SIGINT` — they cancel their RabbitMQ consumer, flush/drain all in-progress writes, then exit cleanly
-
----
-
-## Stress Test
-
-The repository includes a [k6](https://k6.io/) stress test that exercises all four services simultaneously with a 5-minute ramping load profile.
-
-### Scenarios (130 VUs peak)
-
-| Scenario | VUs | Target endpoint | Peak throughput |
+| Scenario | VUs | Target | Peak |
 |---|---|---|---|
 | `score_submissions` | 50 | `POST /scores` | ~500 req/s |
 | `leaderboard_reads` | 40 | `GET /players/leaderboard` | ~800 req/s |
 | `top_scores_reads` | 25 | `GET /scores/top` | ~500 req/s |
 | `log_ingestion` | 15 | `POST /logs` | ~75 req/s |
 
-Each scenario ramps up over 2 minutes, holds for 2 minutes, then ramps down over 1 minute.
+Stages: 2 min ramp-up → 2 min hold → 1 min ramp-down per scenario.
 
-### Thresholds
-
-The test fails if any of these are breached:
-- Global `p(95) < 2 s`, `p(99) < 5 s`
-- Error rate `< 5 %`
-- Leaderboard + top scores `p(95) < 500 ms`
-- Score submit `p(95) < 1.5 s`
-
-### Prerequisites
+Thresholds (test fails if breached): global `p(95) < 2 s`, `p(99) < 5 s`, error rate `< 5 %`, leaderboard + top-scores `p(95) < 500 ms`, score submit `p(95) < 1.5 s`.
 
 ```bash
-brew install k6   # macOS
-```
-
-All services must be running before starting the test:
-
-```bash
+brew install k6                 # macOS
 docker compose up -d
+k6 run stress-test/stress.js    # or ./stress-test/run.sh [--summary]
 ```
 
-### Run
-
-```bash
-# Simple run — results printed to terminal
-k6 run stress-test/stress.js
-
-# Or use the convenience wrapper (checks for k6, adds countdown)
-./stress-test/run.sh
-
-# Save a JSON summary alongside the terminal output
-./stress-test/run.sh --summary
-# → summary written to stress-test/results/summary-<timestamp>.json
-```
-
-### Override service URLs
-
-By default the test targets `localhost` on the standard ports. Override with environment variables:
-
-```bash
-k6 run \
-  -e PLAYER_URL=http://my-host:3001 \
-  -e SCORE_URL=http://my-host:3002 \
-  -e LEADERBOARD_URL=http://my-host:3003 \
-  -e LOG_URL=http://my-host:3004 \
-  stress-test/stress.js
-```
+Override targets with `PLAYER_URL` / `SCORE_URL` / `LEADERBOARD_URL` / `LOG_URL` env vars.
 
 ---
 
 ## Scaling
 
-See [docs/scaling-guidelines.md](docs/scaling-guidelines.md) for detailed strategies covering:
-
-- Horizontal scaling with load balancers
-- MongoDB replica sets, sharding, and connection pooling
-- Redis caching layer for leaderboard/top scores
-- RabbitMQ clustering and worker scaling
-- AWS deployment architecture
+[docs/scaling-guidelines.md](docs/scaling-guidelines.md) covers: horizontal scaling behind a load balancer, MongoDB replica sets + sharding + index map, Redis Sentinel/Cluster + AOF, RabbitMQ clustering, worker tuning presets, and an AWS deployment reference.
 
 ---
 
-## Environment Variables
+## Environment variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|---|---|---|
 | `MONGO_URI` | — | MongoDB Atlas connection string |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
 | `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672` | RabbitMQ connection string |
@@ -276,8 +239,10 @@ See [docs/scaling-guidelines.md](docs/scaling-guidelines.md) for detailed strate
 | `SCORE_SERVICE_PORT` | `3002` | Score service port |
 | `LEADERBOARD_SERVICE_PORT` | `3003` | Leaderboard service port |
 | `LOG_SERVICE_PORT` | `3004` | Log service port |
-| `BATCH_SIZE` | `50` | Log worker batch size |
-| `BATCH_INTERVAL_MS` | `2000` | Log worker flush interval (ms) |
-| `MAX_CONCURRENT_WRITES` | `3` | Max parallel DB writes (log worker) |
-| `TOKEN_BUCKET_CAPACITY` | `10` | Token bucket capacity (log worker) |
-| `TOKEN_BUCKET_REFILL_RATE` | `5` | Tokens refilled per second (log worker) |
+| `BATCH_SIZE` | `50` | Worker flush-by-size threshold |
+| `BATCH_INTERVAL_MS` | `2000` | Worker flush-by-time threshold |
+| `MAX_CONCURRENT_WRITES` | `3` | Semaphore cap — parallel DB writes |
+| `TOKEN_BUCKET_CAPACITY` | `10` | Token bucket burst capacity |
+| `TOKEN_BUCKET_REFILL_RATE` | `5` | Tokens refilled per second |
+
+The log and score workers share the same four rate-control env vars.
