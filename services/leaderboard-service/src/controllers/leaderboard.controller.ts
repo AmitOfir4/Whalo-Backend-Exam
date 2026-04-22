@@ -46,8 +46,8 @@ async function ensureLeaderboardPopulated(): Promise<void>
       }
 
       // Leaderboard only stores { playerId → totalScore }. Display names are
-      // owned by player-service and resolved client-side via the batch
-      // GET /players?ids=... endpoint, so no cross-service read happens here.
+      // owned by player-service and resolved client-side via GET /players/:playerId
+      // per row, so no cross-service read happens here.
       const pipeline = redis.pipeline();
       for (const doc of allScores)
       {
@@ -75,8 +75,8 @@ export async function getLeaderboard(req: Request, res: Response, next: NextFunc
     const leaderboardRaw = await redis.zrevrange(LEADERBOARD_KEY, start, stop, 'WITHSCORES');
 
     // Parse pairs: [playerId, score, playerId, score, ...] into entry objects.
-    // Clients resolve display names by calling GET /players?ids=... on
-    // player-service with the playerIds from this response.
+    // Clients resolve display names by calling GET /players/:playerId on
+    // player-service per row from this response (if they need names at all).
     const results: { playerId: string; totalScore: number }[] = [];
     for (let i = 0; i < leaderboardRaw.length; i += 2)
     {

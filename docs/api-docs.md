@@ -55,40 +55,7 @@ Create a new player profile.
 
 ---
 
-### GET /players?ids=...
-Batch-resolve a set of `playerId`s to their display names. This is the only shape `GET /players` supports — there is deliberately no "list all players" endpoint; no product surface needs a full player dump and omitting it keeps the service cheaper to operate.
-
-Used by clients immediately after pulling a `/scores/top` or `/players/leaderboard` page (both return `playerId` only) to hydrate names in a single round-trip — not N parallel `GET /players/:playerId` calls.
-
-**Query Parameters:**
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `ids` | string | yes | Comma-separated `playerId` list. Deduplicated server-side, capped at 100 entries. |
-
-**Responses:**
-
-| Status | Description |
-|--------|-------------|
-| 200 | `{data: [{playerId, username}]}`. Response order mirrors request order; unknown IDs are silently omitted. |
-| 400 | `ids` missing, empty, or exceeds 100 entries. |
-
-**Example Request:**
-```
-GET /players?ids=abc-123,def-456,ghi-789
-```
-
-**Example Response (200):**
-```json
-{
-  "data": [
-    { "playerId": "abc-123", "username": "playerone" },
-    { "playerId": "def-456", "username": "playertwo" }
-  ]
-}
-```
-
-In this example `ghi-789` didn't match a player and was dropped from the response. Clients can detect the missing ID by diffing request order against the returned `data` array.
+> `GET /players` with no `:playerId` is deliberately not exposed. No product surface needs a full player dump, and omitting it keeps the service cheaper to operate.
 
 ---
 
@@ -185,7 +152,7 @@ The Score Worker still re-runs the same two scripts when it processes the messag
 }
 ```
 
-> Display names are not returned here — clients resolve them in batch via `GET /players?ids=...` against `player-service` when needed.
+> Display names are not returned here — clients resolve them via `GET /players/:playerId` against `player-service` when needed.
 
 ---
 
@@ -203,7 +170,7 @@ Retrieve the top 10 highest individual scores. Results are served directly from 
 ]
 ```
 
-> The response carries `playerId` only. Clients render display names by calling `GET /players?ids=abc-123,def-456,...` once after this response arrives.
+> The response carries `playerId` only. Clients render display names by calling `GET /players/:playerId` per row against `player-service`.
 
 ---
 
@@ -239,7 +206,7 @@ Retrieve players sorted by their total aggregated score. Rankings are served fro
 }
 ```
 
-> As with `/scores/top`, only `playerId` and the numeric score are returned. Leaderboard-service deliberately does not read the `players` collection — the client fans the `playerId` list out to `GET /players?ids=...` on `player-service` to resolve display names in a single additional round-trip.
+> As with `/scores/top`, only `playerId` and the numeric score are returned. Leaderboard-service deliberately does not read the `players` collection — the client resolves display names via `GET /players/:playerId` on `player-service` per row from this response (if enrichment is needed).
 
 ---
 

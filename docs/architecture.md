@@ -6,7 +6,7 @@ This document covers the runtime topology, the three async data flows (score, pl
 - **Redis is the source of truth for rankings** — the leaderboard sorted set and the top-10 set + hash are never TTL'd; MongoDB is the durable backup, not the read path.
 - **Idempotent by construction** — every redelivery-safe step is enforced by a Mongo unique index, a scoped `$inc`, or an idempotent Lua script.
 - **Eventually consistent fan-out** — `player.*` events propagate over RabbitMQ so score-service can update its denormalized state (`playerscores` aggregates, `players:known` existence set) without being on the player-service's HTTP critical path.
-- **No cross-service denormalization of display names** — scores and playerscores store `playerId` only. Clients resolve usernames for leaderboard / top-score rows with a single batched `GET /players?ids=id1,id2,...` against `player-service`.
+- **No cross-service denormalization of display names** — scores and playerscores store `playerId` only. Clients resolve usernames for leaderboard / top-score rows via `GET /players/:playerId` against `player-service` when enrichment is needed.
 
 ## System Overview
 
@@ -134,7 +134,7 @@ sequenceDiagram
 
 On `player.deleted` the consumer removes `playerscores`, all `scores`, `ZREM leaderboard`, `SREM players:known`, and runs an atomic Lua script that scans the (≤10 entry) `top10scores:set` sorted set and removes every `playerId:*` member from both the set and the `top10scores:data` hash in a single round-trip — ensuring the deleted player's individual score entries disappear from the top-scores read path immediately.
 
-`player.username_updated` is a registered no-op handler on the score-service consumer: the score pipeline never stores the username, so renames require no cascade. Clients always re-resolve display names against `player-service` via `GET /players?ids=...`, so the update is visible on the next read.
+`player.username_updated` is a registered no-op handler on the score-service consumer: the score pipeline never stores the username, so renames require no cascade. Clients always re-resolve display names against `player-service` via `GET /players/:playerId`, so the update is visible on the next read.
 
 ---
 
@@ -299,7 +299,7 @@ graph LR
     ZR --> RES
 ```
 
-Display names are resolved by the client via a single batched `GET /players?ids=...` against `player-service` after consuming the leaderboard response — keeping this service on a single data store (Redis) and off the `players` collection entirely.
+Display names are resolved by the client via `GET /players/:playerId` against `player-service` per row after consuming the leaderboard response — keeping this service on a single data store (Redis) and off the `players` collection entirely.
 
 On cold start (empty sorted set after Redis restart), the leaderboard service re-populates from the `playerscores` MongoDB collection. A **distributed Redis lock** (`SET NX PX 30000`) ensures only one service instance runs the expensive backfill — concurrent instances detect the lock is held, wait 300 ms, and return; the next request hits the already-populated fast path.
 

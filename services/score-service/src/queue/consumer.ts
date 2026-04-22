@@ -48,7 +48,7 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
       // Seed playerscores totals and record the player as known in Redis —
       // both idempotent (upsert + SADD). Score-service no longer tracks
       // usernames: display names live exclusively in player-service and
-      // are resolved client-side via GET /players?ids=... .
+      // are resolved client-side via GET /players/:playerId when needed.
       await Promise.all([
         mongoose.connection.db!.collection('playerscores').updateOne(
           { playerId },

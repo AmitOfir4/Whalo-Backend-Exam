@@ -82,8 +82,7 @@ npm run dev:score-worker    # score worker
 | Method | Endpoint | Service | Notes |
 |---|---|---|---|
 | POST | `/players` | Player | `201` on success |
-| GET | `/players?ids=id1,id2,...` | Player | Batch-resolve playerIds → usernames (deduped, capped at 100). No "list all players" shape is exposed. |
-| GET | `/players/:playerId` | Player | |
+| GET | `/players/:playerId` | Player | No "list all players" endpoint is exposed |
 | PUT | `/players/:playerId` | Player | Publishes `player.username_updated` when applicable |
 | DELETE | `/players/:playerId` | Player | Publishes `player.deleted` |
 | POST | `/scores` | Score | **202** — top-10 updated synchronously via Lua; durable write async |
@@ -135,7 +134,7 @@ Retry safety is enforced independently at four layers — redelivery is safe eve
 
 Player Service publishes lifecycle events; Score Service consumes them so denormalized state in `scores`, `playerscores`, and Redis stays consistent — without blocking the HTTP write path.
 
-Display names live exclusively in `player-service`. The score pipeline only needs to know *whether* a `playerId` is valid — never its name — so clients resolve usernames for leaderboard / top-score rows via a single batched `GET /players?ids=<id1>,<id2>,...` against `player-service`.
+Display names live exclusively in `player-service`. The score pipeline only needs to know *whether* a `playerId` is valid — never its name — so clients resolve usernames for leaderboard / top-score rows via `GET /players/:playerId` against `player-service` when enrichment is needed.
 
 | Event | Handler (Score Service consumer) |
 |---|---|

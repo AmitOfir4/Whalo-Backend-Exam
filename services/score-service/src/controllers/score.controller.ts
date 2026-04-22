@@ -116,7 +116,8 @@ export async function getTopScores(_req: Request, res: Response, next: NextFunct
     }
 
     // Fetch the immutable score metadata for each key from the hash. Clients
-    // resolve display names via GET /players?ids=... against player-service.
+    // resolve display names via GET /players/:playerId against player-service
+    // for any row they want to enrich.
     const rawData = await redis.hmget(TOP_SCORES_DATA, ...topKeys);
 
     const topScores = rawData

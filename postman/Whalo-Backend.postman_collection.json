@@ -79,30 +79,6 @@
           ]
         },
         {
-          "name": "Batch Resolve Usernames (GET /players?ids=...)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{playerServiceUrl}}/players?ids=abc-123,def-456",
-              "host": ["{{playerServiceUrl}}"],
-              "path": ["players"],
-              "query": [
-                { "key": "ids", "value": "abc-123,def-456", "description": "Comma-separated playerIds. Deduped, capped at 100." }
-              ]
-            },
-            "description": "Batch-resolve a set of playerIds to usernames. Used by clients after receiving a /scores/top or /players/leaderboard page (both return playerId only) to hydrate display names in a single round-trip."
-          },
-          "response": [
-            {
-              "name": "200 - Batch Resolution",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"data\": [\n    { \"playerId\": \"abc-123\", \"username\": \"PlayerOne\" },\n    { \"playerId\": \"def-456\", \"username\": \"PlayerTwo\" }\n  ]\n}"
-            }
-          ]
-        },
-        {
           "name": "Update Player",
           "request": {
             "method": "PUT",

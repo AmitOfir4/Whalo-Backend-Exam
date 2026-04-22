@@ -111,7 +111,7 @@ GET /scores/top → ZREVRANGE top10scores:set 0 9 → HMGET top10scores:data (no
 ### Known-Players SET
 Score-service uses a Redis SET (`players:known`) to gate `POST /scores` — `SISMEMBER` is O(1) and keeps the submit path off both MongoDB and `player-service`. The set is maintained incrementally by the `player_events` consumer (`SADD` on `player.created`, `SREM` on `player.deleted`) and hydrated on cold-start from the `playerscores` collection under a distributed lock, so restarting Redis never opens a window for `POST /scores` to accept submissions for nonexistent players.
 
-Display names are intentionally *not* cached here — `/scores/top` and `/players/leaderboard` return `playerId` only, and clients resolve usernames in a single batched call to `GET /players?ids=...` against `player-service`. This keeps the score and leaderboard services on a single data store (Redis) and avoids denormalizing a player-service-owned field into score-service's state.
+Display names are intentionally *not* cached here — `/scores/top` and `/players/leaderboard` return `playerId` only, and clients resolve usernames via `GET /players/:playerId` against `player-service` per row when enrichment is needed. This keeps the score and leaderboard services on a single data store (Redis) and avoids denormalizing a player-service-owned field into score-service's state.
 
 ### Redis Scaling
 - For high availability, use **Redis Sentinel** (automatic failover) or **Redis Cluster** (horizontal sharding)
