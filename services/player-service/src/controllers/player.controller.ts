@@ -1,7 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import { Player } from '../models/player.model';
-import { AppError } from '@whalo/shared';
+import { AppError, throwConflictIfDuplicate } from '@whalo/shared';
 import { publishPlayerEvent } from '../queue/publisher';
+import type { ListPlayersQuery } from '../validators/player.validator';
+
+// Translate Mongo E11000 duplicate-key errors on players to 409 Conflict
+// with a meaningful, field-specific message.
+const PLAYER_DUPLICATE_FIELD_MESSAGES: Record<string, string> =
+{
+  email: 'A player with this email already exists',
+  username: 'A player with this username already exists',
+  playerId: 'A player with this ID already exists',
+};
 
 export async function createPlayer(req: Request, res: Response, next: NextFunction): Promise<void>
 {
@@ -9,25 +19,25 @@ export async function createPlayer(req: Request, res: Response, next: NextFuncti
   {
     const { username, email } = req.body;
 
-    const existingPlayer = await Player.findOne({ $or: [{ email }, { username }] });
-    if (existingPlayer)
+    // We rely on Mongo's unique index as the authoritative uniqueness check.
+    // A pre-check (findOne then insert) is vulnerable to a TOCTOU race: two
+    // requests with the same email can both pass the check and both reach
+    // the insert — producing an unhandled 11000 and a 500 response. Instead,
+    // insert first and translate any E11000 to a clean 409.
+    let player;
+    try
     {
-      if (existingPlayer.email === email)
-      {
-        throw new AppError('A player with this email already exists', 409);
-      }
-      if (existingPlayer.username === username)
-      {
-        throw new AppError('A player with this username already exists', 409);
-      }
+      player = await Player.create({ username, email });
+    }
+    catch (err)
+    {
+      throwConflictIfDuplicate(err, PLAYER_DUPLICATE_FIELD_MESSAGES);
     }
 
-    const player = await Player.create({ username, email });
-
     // Publish event so score-service creates the playerscores entry asynchronously
-    await publishPlayerEvent({ event: 'player.created', playerId: player.playerId, username: player.username });
+    await publishPlayerEvent({ event: 'player.created', playerId: player!.playerId, username: player!.username });
 
-    res.status(201).json(player.toJSON());
+    res.status(201).json(player!.toJSON());
   }
   catch (error)
   {
@@ -59,8 +69,27 @@ export async function getAllPlayers(req: Request, res: Response, next: NextFunct
 {
   try
   {
-    const players = await Player.find();
-    res.json(players.map(player => player.toJSON()));
+    // validateQuery has already coerced and bounded these values.
+    const { page, limit } = req.query as unknown as ListPlayersQuery;
+    const skip = (page - 1) * limit;
+
+    const [players, total] = await Promise.all([
+      Player.find().sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Player.estimatedDocumentCount(),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+    res.json({
+      data: players.map((player) => player.toJSON()),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    });
   }
   catch (error)
   {
@@ -78,29 +107,21 @@ export async function updatePlayer(req: Request, res: Response, next: NextFuncti
     if (req.body.username) updateData.username = req.body.username;
     if (req.body.email) updateData.email = req.body.email;
 
-    if (updateData.email)
+    let player;
+    try
     {
-      const existingPlayer = await Player.findOne({ email: updateData.email, playerId: { $ne: playerId } });
-      if (existingPlayer)
-      {
-        throw new AppError('A player with this email already exists', 409);
-      }
+      player = await Player.findOneAndUpdate(
+        { playerId },
+        { $set: updateData },
+        { new: true, runValidators: true },
+      );
     }
-
-    if (updateData.username)
+    catch (err)
     {
-      const existingPlayer = await Player.findOne({ username: updateData.username, playerId: { $ne: playerId } });
-      if (existingPlayer)
-      {
-        throw new AppError('A player with this username already exists', 409);
-      }
+      // Unique-index violation — someone else grabbed this email/username
+      // between the client's request and our write. Translate to 409.
+      throwConflictIfDuplicate(err, PLAYER_DUPLICATE_FIELD_MESSAGES);
     }
-
-    const player = await Player.findOneAndUpdate(
-      { playerId },
-      { $set: updateData },
-      { new: true, runValidators: true }
-    );
 
     if (!player)
     {

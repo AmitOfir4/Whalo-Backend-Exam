@@ -1,8 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import { Score } from '../models/score.model';
-import { AppError, getRedis, USERNAMES_KEY, TOP_SCORES_SET, TOP_SCORES_DATA } from '@whalo/shared';
+import {
+  AppError,
+  getRedis,
+  USERNAMES_KEY,
+  TOP_SCORES_SET,
+  TOP_SCORES_DATA,
+  withDistributedLock,
+} from '@whalo/shared';
 import mongoose from 'mongoose';
 import { publishScoreEvent } from '../queue/publisher';
+
+const TOP_SCORES_HYDRATE_LOCK_KEY = 'top-scores:hydrate:lock';
+const TOP_SCORES_HYDRATE_LOCK_TTL_MS = 30_000;
+const TOP_SCORES_HYDRATE_LOCK_WAIT_MS = 300;
 
 export async function submitScore(req: Request, res: Response, next: NextFunction): Promise<void>
 {
@@ -116,14 +127,19 @@ export async function getTopScores(_req: Request, res: Response, next: NextFunct
 }
 
 /**
- * Cold-start hydration: populate the top scores sorted set from MongoDB
- * if Redis is empty (e.g., after a Redis restart).
+ * Cold-start hydration: populate the top scores sorted set from MongoDB if
+ * Redis is empty (e.g., after a Redis restart).
+ *
+ * Wrapped in a distributed lock (mirroring the leaderboard-service pattern)
+ * so that when N replicas cold-start together, only one performs the
+ * MongoDB read + pipeline load. The others wait briefly and return — the
+ * next request will hit the already-populated fast path.
  */
 export async function hydrateTopScoresFromMongo(): Promise<void>
 {
   const redis = getRedis();
 
-  // Check if sorted set already has data
+  // Fast path — sorted set already populated
   const count = await redis.zcard(TOP_SCORES_SET);
   if (count > 0)
   {
@@ -131,39 +147,55 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
     return;
   }
 
-  console.log('Hydrating top scores from MongoDB...');
-
-  // Fetch top 10 scores from MongoDB
-  const topScores = await Score.find({}, { _id: 0, playerId: 1, username: 1, score: 1, createdAt: 1 })
-    .sort({ score: -1 })
-    .limit(10)
-    .lean();
-
-  if (topScores.length === 0)
-  {
-    console.log('No scores in MongoDB, skipping hydration.');
-    return;
-  }
-
-  // Populate Redis sorted set and hash
-  const pipeline = redis.pipeline();
-
-  for (const entry of topScores)
-  {
-    const timestamp = new Date(entry.createdAt).getTime();
-    const scoreKey = `${entry.playerId}:${timestamp}`;
-    const metadata = JSON.stringify(
+  await withDistributedLock(
+    redis,
     {
-      playerId: entry.playerId,
-      username: entry.username,
-      score: entry.score,
-      createdAt: entry.createdAt,
-    });
+      key: TOP_SCORES_HYDRATE_LOCK_KEY,
+      ttlMs: TOP_SCORES_HYDRATE_LOCK_TTL_MS,
+      waitOnContendedMs: TOP_SCORES_HYDRATE_LOCK_WAIT_MS,
+    },
+    async () =>
+    {
+      // Re-check inside the lock in case another replica just finished
+      const sizeAfterLock = await redis.zcard(TOP_SCORES_SET);
+      if (sizeAfterLock > 0)
+      {
+        return;
+      }
 
-    pipeline.zadd(TOP_SCORES_SET, entry.score, scoreKey);
-    pipeline.hset(TOP_SCORES_DATA, scoreKey, metadata);
-  }
+      console.log('Hydrating top scores from MongoDB...');
 
-  await pipeline.exec();
-  console.log(`Hydrated ${topScores.length} top scores into Redis.`);
+      const topScores = await Score.find({}, { _id: 0, playerId: 1, username: 1, score: 1, createdAt: 1 })
+        .sort({ score: -1 })
+        .limit(10)
+        .lean();
+
+      if (topScores.length === 0)
+      {
+        console.log('No scores in MongoDB, skipping hydration.');
+        return;
+      }
+
+      const pipeline = redis.pipeline();
+
+      for (const entry of topScores)
+      {
+        const timestamp = new Date(entry.createdAt).getTime();
+        const scoreKey = `${entry.playerId}:${timestamp}`;
+        const metadata = JSON.stringify(
+        {
+          playerId: entry.playerId,
+          username: entry.username,
+          score: entry.score,
+          createdAt: entry.createdAt,
+        });
+
+        pipeline.zadd(TOP_SCORES_SET, entry.score, scoreKey);
+        pipeline.hset(TOP_SCORES_DATA, scoreKey, metadata);
+      }
+
+      await pipeline.exec();
+      console.log(`Hydrated ${topScores.length} top scores into Redis.`);
+    },
+  );
 }

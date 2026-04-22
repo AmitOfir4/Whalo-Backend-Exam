@@ -1,40 +1,40 @@
-import amqplib from 'amqplib';
-import { SCORE_EVENTS_QUEUE } from '@whalo/shared';
+import { SCORE_EVENTS_QUEUE, RabbitMQConnection } from '@whalo/shared';
 
 const QUEUE_NAME = SCORE_EVENTS_QUEUE;
 
-let connection: Awaited<ReturnType<typeof amqplib.connect>> | null = null;
-let channel: Awaited<ReturnType<Awaited<ReturnType<typeof amqplib.connect>>['createChannel']>> | null = null;
+let rabbit: RabbitMQConnection | null = null;
 
 export async function connectScoreQueue(url: string): Promise<void>
 {
-  connection = await amqplib.connect(url);
-  channel = await connection.createChannel();
-  await channel.assertQueue(QUEUE_NAME, { durable: true });
+  rabbit = new RabbitMQConnection({ url });
+
+  await rabbit.onReady(async (channel) =>
+  {
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+  });
+
+  await rabbit.connect();
   console.log('Score service publisher connected to RabbitMQ');
 }
 
-export async function publishScoreEvent(message: object): Promise<boolean>
+export async function publishScoreEvent(message: object): Promise<void>
 {
-  if (!channel)
+  if (!rabbit)
   {
-    throw new Error('RabbitMQ channel not initialized');
+    throw new Error('RabbitMQ publisher not initialized');
   }
-  return channel.sendToQueue(
+  await rabbit.publish(
     QUEUE_NAME,
     Buffer.from(JSON.stringify(message)),
-    { persistent: true }
+    { persistent: true },
   );
 }
 
 export async function closeScoreQueue(): Promise<void>
 {
-  if (channel)
+  if (rabbit)
   {
-    await channel.close();
-  }
-  if (connection)
-  {
-    await connection.close();
+    await rabbit.close();
+    rabbit = null;
   }
 }

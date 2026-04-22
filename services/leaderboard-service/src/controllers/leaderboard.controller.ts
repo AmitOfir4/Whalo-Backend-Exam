@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getRedis, LEADERBOARD_KEY, USERNAMES_KEY } from '@whalo/shared';
+import { getRedis, LEADERBOARD_KEY, USERNAMES_KEY, withDistributedLock } from '@whalo/shared';
 import mongoose from 'mongoose';
 
 const BACKFILL_LOCK_KEY = 'leaderboard:backfill:lock';
@@ -8,9 +8,9 @@ const BACKFILL_LOCK_WAIT_MS = 300;
 
 /**
  * Backfill the Redis sorted set from MongoDB when Redis is cold (empty).
- * Uses a distributed Redis lock (SET NX PX) so only one service instance
- * performs the expensive MongoDB read; concurrent callers wait briefly and
- * return, letting the next request hit the already-populated fast path.
+ * Wrapped in a distributed lock so only one replica performs the expensive
+ * MongoDB read; concurrent callers wait briefly and return, letting the
+ * next request hit the already-populated fast path.
  */
 async function ensureLeaderboardPopulated(): Promise<void>
 {
@@ -23,51 +23,40 @@ async function ensureLeaderboardPopulated(): Promise<void>
     return;
   }
 
-  // Try to acquire the distributed lock. Returns 'OK' on success, null if
-  // another instance already holds it.
-  const acquired = await redis.set(BACKFILL_LOCK_KEY, '1', 'PX', BACKFILL_LOCK_TTL_MS, 'NX');
-  if (!acquired)
-  {
-    // Another instance is running the backfill — wait briefly so the sorted
-    // set is ready for the next request, then return without duplicating work.
-    await new Promise<void>((resolve) => setTimeout(resolve, BACKFILL_LOCK_WAIT_MS));
-    return;
-  }
-
-  try
-  {
-    // Re-check inside the lock in case another instance just finished
-    const sizeAfterLock = await redis.zcard(LEADERBOARD_KEY);
-    if (sizeAfterLock > 0)
+  await withDistributedLock(
+    redis,
+    { key: BACKFILL_LOCK_KEY, ttlMs: BACKFILL_LOCK_TTL_MS, waitOnContendedMs: BACKFILL_LOCK_WAIT_MS },
+    async () =>
     {
-      return;
-    }
-
-    const playerScoresCollection = mongoose.connection.db!.collection('playerscores');
-    const allScores = await playerScoresCollection
-      .find({}, { projection: { _id: 0, playerId: 1, username: 1, totalScore: 1 } })
-      .toArray();
-
-    if (allScores.length === 0)
-    {
-      return;
-    }
-
-    const pipeline = redis.pipeline();
-    for (const doc of allScores)
-    {
-      pipeline.zadd(LEADERBOARD_KEY, doc.totalScore, doc.playerId);
-      if (doc.username)
+      // Re-check inside the lock in case another replica just finished
+      const sizeAfterLock = await redis.zcard(LEADERBOARD_KEY);
+      if (sizeAfterLock > 0)
       {
-        pipeline.hset(USERNAMES_KEY, doc.playerId, doc.username);
+        return;
       }
-    }
-    await pipeline.exec();
-  }
-  finally
-  {
-    await redis.del(BACKFILL_LOCK_KEY);
-  }
+
+      const playerScoresCollection = mongoose.connection.db!.collection('playerscores');
+      const allScores = await playerScoresCollection
+        .find({}, { projection: { _id: 0, playerId: 1, username: 1, totalScore: 1 } })
+        .toArray();
+
+      if (allScores.length === 0)
+      {
+        return;
+      }
+
+      const pipeline = redis.pipeline();
+      for (const doc of allScores)
+      {
+        pipeline.zadd(LEADERBOARD_KEY, doc.totalScore, doc.playerId);
+        if (doc.username)
+        {
+          pipeline.hset(USERNAMES_KEY, doc.playerId, doc.username);
+        }
+      }
+      await pipeline.exec();
+    },
+  );
 }
 
 export async function getLeaderboard(req: Request, res: Response, next: NextFunction): Promise<void>

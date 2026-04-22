@@ -2,9 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { connectDB, errorHandler } from '@whalo/shared';
+import mongoose from 'mongoose';
+import { connectDB, errorHandler, onShutdown } from '@whalo/shared';
 import playerRoutes from './routes/player.routes';
-import { connectQueue } from './queue/publisher';
+import { connectQueue, closeQueue } from './queue/publisher';
 
 dotenv.config({ path: '../../.env' });
 
@@ -30,10 +31,20 @@ async function start(): Promise<void>
 {
   await connectDB(MONGO_URI);
   await connectQueue(RABBITMQ_URL);
-  app.listen(PORT, () =>
+
+  const server = app.listen(PORT, () =>
   {
     console.log(`Player Service running on port ${PORT}`);
   });
+
+  // Shutdown hooks run in reverse-registration order: HTTP first (stops new
+  // requests coming in), then the publisher (drains confirms), then Mongo.
+  onShutdown(() => new Promise<void>((resolve, reject) =>
+  {
+    server.close((err) => (err ? reject(err) : resolve()));
+  }));
+  onShutdown(async () => { await closeQueue(); });
+  onShutdown(async () => { await mongoose.disconnect(); });
 }
 
 start();

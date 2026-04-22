@@ -9,12 +9,14 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "amqplib": "^0.10.4",
     "express": "^4.21.0",
     "ioredis": "^5.4.0",
     "mongoose": "^8.8.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.5",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"

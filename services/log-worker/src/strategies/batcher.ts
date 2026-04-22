@@ -28,6 +28,9 @@ interface BufferedMessage
 const HIGH_PRIORITY_BATCH_DIVISOR = 5;
 const HIGH_PRIORITY_INTERVAL_DIVISOR = 4;
 
+export type AckFn = (msg: ConsumeMessage) => void;
+export type NackFn = (msg: ConsumeMessage, requeue: boolean) => void;
+
 /**
  * Batcher — Aggregates incoming log messages and flushes them to MongoDB
  * in batches using insertMany(), controlled by:
@@ -38,6 +41,12 @@ const HIGH_PRIORITY_INTERVAL_DIVISOR = 4;
  * Flush triggers:
  *   1. Buffer reaches batchSize threshold (lower for high-priority)
  *   2. Timer reaches batchIntervalMs since last flush
+ *
+ * Failure handling:
+ *   A batch that fails to persist is nack'd with requeue=true so RabbitMQ
+ *   re-delivers it. Without this, the messages would sit in the broker's
+ *   "unacked" bucket forever, slowly consuming the prefetch window until
+ *   the worker stalls entirely.
  */
 export class Batcher
 {
@@ -49,14 +58,16 @@ export class Batcher
   private readonly config: BatcherConfig;
   private readonly tokenBucket: TokenBucket;
   private readonly semaphore: Semaphore;
-  private readonly ackFn: (msg: ConsumeMessage) => void;
+  private readonly ackFn: AckFn;
+  private readonly nackFn: NackFn;
 
-  constructor(config: BatcherConfig, ackFn: (msg: ConsumeMessage) => void)
+  constructor(config: BatcherConfig, ackFn: AckFn, nackFn: NackFn)
   {
     this.config = config;
     this.tokenBucket = new TokenBucket(config.tokenBucketCapacity, config.tokenBucketRefillRate);
     this.semaphore = new Semaphore(config.maxConcurrentWrites);
     this.ackFn = ackFn;
+    this.nackFn = nackFn;
   }
 
   add(data: BufferedMessage['data'], message: ConsumeMessage): void
@@ -105,6 +116,7 @@ export class Batcher
     this.hasHighPriority = false;
 
     this.activeFlushes++;
+    let writeSucceeded = false;
     try
     {
       // Acquire concurrency slot (wait if max parallel writes reached)
@@ -125,6 +137,7 @@ export class Batcher
         }));
 
         await Log.insertMany(docs, { ordered: false });
+        writeSucceeded = true;
 
         // ACK all messages in the batch only after successful write
         for (const item of batch)
@@ -141,11 +154,32 @@ export class Batcher
     }
     catch (error)
     {
-      // On failure, messages are NOT acknowledged → RabbitMQ will redeliver
       console.error(`Failed to write batch of ${batch.length} logs:`, error);
     }
     finally
     {
+      // On failure, nack (with requeue) every message in the batch so
+      // RabbitMQ redelivers them instead of leaving them as "unacked in
+      // flight" — which would quietly fill the prefetch window and stall
+      // the worker.
+      if (!writeSucceeded)
+      {
+        for (const item of batch)
+        {
+          try
+          {
+            this.nackFn(item.message, true);
+          }
+          catch (nackErr)
+          {
+            // Channel may have been torn down by the time we're nacking.
+            // Nothing we can do beyond logging — the consumer will be
+            // restarted and the broker will redeliver unacked messages.
+            console.error('Failed to nack message after flush failure:', (nackErr as Error).message);
+          }
+        }
+      }
+
       this.activeFlushes--;
       if (this.activeFlushes === 0 && this.drainResolve)
       {

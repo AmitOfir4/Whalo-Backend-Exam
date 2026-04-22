@@ -2,8 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { errorHandler } from '@whalo/shared';
-import { connectQueue } from './queue/publisher';
+import { errorHandler, onShutdown } from '@whalo/shared';
+import { connectQueue, closeQueue } from './queue/publisher';
 import logRoutes from './routes/log.routes';
 
 dotenv.config({ path: '../../.env' });
@@ -28,10 +28,17 @@ app.use(errorHandler);
 async function start(): Promise<void>
 {
   await connectQueue(RABBITMQ_URL);
-  app.listen(PORT, () =>
+
+  const server = app.listen(PORT, () =>
   {
     console.log(`Log Service running on port ${PORT}`);
   });
+
+  onShutdown(() => new Promise<void>((resolve, reject) =>
+  {
+    server.close((err) => (err ? reject(err) : resolve()));
+  }));
+  onShutdown(async () => { await closeQueue(); });
 }
 
 start();

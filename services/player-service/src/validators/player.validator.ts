@@ -26,3 +26,18 @@ export const updatePlayerSchema = z
   .refine((data) => data.username || data.email, {
     message: 'At least one field (username or email) must be provided',
   });
+
+export const listPlayersQuerySchema = z.object({
+  page: z
+    .string()
+    .optional()
+    .transform((val) => (val === undefined ? 1 : Number(val)))
+    .pipe(z.number().int().min(1, 'page must be >= 1')),
+  limit: z
+    .string()
+    .optional()
+    .transform((val) => (val === undefined ? 20 : Number(val)))
+    .pipe(z.number().int().min(1, 'limit must be >= 1').max(100, 'limit must be <= 100')),
+});
+
+export type ListPlayersQuery = z.infer<typeof listPlayersQuerySchema>;

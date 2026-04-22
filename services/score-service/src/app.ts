@@ -2,10 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
+import mongoose from 'mongoose';
+import { connectDB, connectRedis, getRedis, errorHandler, onShutdown } from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
 import { startPlayerEventsConsumer } from './queue/consumer';
-import { connectScoreQueue } from './queue/publisher';
+import { connectScoreQueue, closeScoreQueue } from './queue/publisher';
 import { hydrateTopScoresFromMongo } from './controllers/score.controller';
 
 dotenv.config({ path: '../../.env' });
@@ -39,10 +40,20 @@ async function start(): Promise<void>
   // Cold-start: populate top scores from MongoDB if Redis is empty
   await hydrateTopScoresFromMongo();
 
-  app.listen(PORT, () =>
+  const server = app.listen(PORT, () =>
   {
     console.log(`Score Service running on port ${PORT}`);
   });
+
+  // Hooks run in reverse-registration order: HTTP first, then publisher,
+  // then Redis, then Mongo. The consumer registers its own hook.
+  onShutdown(() => new Promise<void>((resolve, reject) =>
+  {
+    server.close((err) => (err ? reject(err) : resolve()));
+  }));
+  onShutdown(async () => { await closeScoreQueue(); });
+  onShutdown(async () => { await getRedis().quit(); });
+  onShutdown(async () => { await mongoose.disconnect(); });
 }
 
 start();

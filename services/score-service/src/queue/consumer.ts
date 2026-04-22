@@ -1,6 +1,15 @@
 import amqplib from 'amqplib';
 import mongoose from 'mongoose';
-import { getRedis, PLAYER_EVENTS_QUEUE, LEADERBOARD_KEY, USERNAMES_KEY, TOP10_CACHE_KEY, TOP_SCORES_SET, TOP_SCORES_DATA } from '@whalo/shared';
+import {
+  getRedis,
+  PLAYER_EVENTS_QUEUE,
+  LEADERBOARD_KEY,
+  USERNAMES_KEY,
+  TOP10_CACHE_KEY,
+  TOP_SCORES_SET,
+  TOP_SCORES_DATA,
+  onShutdown,
+} from '@whalo/shared';
 
 const QUEUE_NAME = PLAYER_EVENTS_QUEUE;
 
@@ -8,6 +17,20 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
 {
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
+
+  // On unexpected connection loss, exit so the orchestrator restarts us. The
+  // alternative — reconnect in-process — would require re-plumbing ack/nack
+  // handles through every in-flight message. Crash-and-restart is simpler
+  // and safe: unacked messages are redelivered by the broker.
+  connection.on('error', (err) =>
+  {
+    console.error('RabbitMQ connection error (score-service consumer):', err.message);
+  });
+  connection.on('close', () =>
+  {
+    console.error('RabbitMQ connection closed unexpectedly — exiting so the orchestrator restarts the service');
+    process.exit(1);
+  });
 
   await channel.assertQueue(QUEUE_NAME, { durable: true });
   await channel.prefetch(10);
@@ -128,10 +151,17 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
     }
   });
 
-  async function gracefulShutdown(): Promise<void>
+  onShutdown(async () =>
   {
     console.log('Score service player_events consumer shutting down...');
-    await channel.cancel(consumerTag);
+    try
+    {
+      await channel.cancel(consumerTag);
+    }
+    catch (err)
+    {
+      console.error('Error cancelling consumer:', (err as Error).message);
+    }
     if (activeMessages > 0)
     {
       await new Promise<void>((resolve) =>
@@ -139,10 +169,7 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
         drainResolve = resolve;
       });
     }
-    await channel.close();
-    await connection.close();
-  }
-
-  process.on('SIGINT', gracefulShutdown);
-  process.on('SIGTERM', gracefulShutdown);
+    try { await channel.close(); } catch { /* already closed */ }
+    try { await connection.close(); } catch { /* already closed */ }
+  });
 }

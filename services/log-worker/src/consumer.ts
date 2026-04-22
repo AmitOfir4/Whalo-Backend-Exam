@@ -1,6 +1,6 @@
 import amqplib, { ConsumeMessage } from 'amqplib';
 import { Batcher, BatcherConfig } from './strategies/batcher';
-import { LOGS_QUEUE, QUEUE_MAX_PRIORITY } from '@whalo/shared';
+import { LOGS_QUEUE, QUEUE_MAX_PRIORITY, onShutdown } from '@whalo/shared';
 
 const QUEUE_NAME = LOGS_QUEUE;
 
@@ -12,6 +12,22 @@ export async function startConsumer(
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
 
+  // Surface lost broker connection as a non-zero exit — the container
+  // orchestrator will restart the worker, which will re-establish the
+  // channel and re-register the consumer cleanly. Handling reconnect
+  // in-process would require plumbing fresh ack/nack callbacks into every
+  // buffered message; crash-and-restart is simpler and equally safe
+  // because unacked messages are redelivered by the broker.
+  connection.on('error', (err) =>
+  {
+    console.error('RabbitMQ connection error (log-worker):', err.message);
+  });
+  connection.on('close', () =>
+  {
+    console.error('RabbitMQ connection closed unexpectedly — exiting so the orchestrator restarts the worker');
+    process.exit(1);
+  });
+
   await channel.assertQueue(QUEUE_NAME, {
     durable: true,
     arguments: { 'x-max-priority': QUEUE_MAX_PRIORITY },
@@ -20,10 +36,11 @@ export async function startConsumer(
   // Prefetch controls how many unacknowledged messages the worker holds
   await channel.prefetch(config.batchSize * 2);
 
-  const batcher = new Batcher(config, (msg: ConsumeMessage) =>
-  {
-    channel.ack(msg);
-  });
+  const batcher = new Batcher(
+    config,
+    (msg: ConsumeMessage) => channel.ack(msg),
+    (msg: ConsumeMessage, requeue: boolean) => channel.nack(msg, false, requeue),
+  );
 
   console.log(`Worker consuming from queue: ${QUEUE_NAME}`);
   console.log(`Batch size: ${config.batchSize}, interval: ${config.batchIntervalMs}ms`);
@@ -45,24 +62,26 @@ export async function startConsumer(
     catch (error)
     {
       console.error('Failed to parse message:', error);
-      // Reject malformed messages without requeue
+      // Reject malformed messages without requeue — redelivering a message
+      // we can't parse would just loop forever.
       channel.nack(msg, false, false);
     }
   });
 
-  // Graceful shutdown — flush buffered messages before closing
-  async function gracefulShutdown(): Promise<void>
+  // Graceful shutdown — cancel the consumer, flush in-flight batches, close.
+  onShutdown(async () =>
   {
     console.log('Log worker shutting down...');
-    // Stop RabbitMQ from delivering new messages
-    await channel.cancel(consumerTag);
-    // Flush buffered messages and wait for all in-progress writes to finish
+    try
+    {
+      await channel.cancel(consumerTag);
+    }
+    catch (err)
+    {
+      console.error('Error cancelling consumer:', (err as Error).message);
+    }
     await batcher.shutdown();
-    await channel.close();
-    await connection.close();
-    process.exit(0);
-  }
-
-  process.on('SIGINT', gracefulShutdown);
-  process.on('SIGTERM', gracefulShutdown);
+    try { await channel.close(); } catch { /* already closed */ }
+    try { await connection.close(); } catch { /* already closed */ }
+  });
 }

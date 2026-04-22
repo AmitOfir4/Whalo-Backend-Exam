@@ -1,5 +1,5 @@
 import amqplib, { ConsumeMessage } from 'amqplib';
-import { SCORE_EVENTS_QUEUE } from '@whalo/shared';
+import { SCORE_EVENTS_QUEUE, onShutdown } from '@whalo/shared';
 import { Batcher, BatcherConfig } from './strategies/batcher';
 
 const QUEUE_NAME = SCORE_EVENTS_QUEUE;
@@ -8,6 +8,18 @@ export async function startConsumer(url: string, config: BatcherConfig): Promise
 {
   const connection = await amqplib.connect(url);
   const channel = await connection.createChannel();
+
+  // Crash-on-disconnect: on unexpected broker close, exit so the
+  // orchestrator restarts the worker and re-establishes a fresh channel.
+  connection.on('error', (err) =>
+  {
+    console.error('RabbitMQ connection error (score-worker):', err.message);
+  });
+  connection.on('close', () =>
+  {
+    console.error('RabbitMQ connection closed unexpectedly — exiting so the orchestrator restarts the worker');
+    process.exit(1);
+  });
 
   await channel.assertQueue(QUEUE_NAME, { durable: true });
   await channel.prefetch(config.batchSize * 2);
@@ -70,18 +82,19 @@ export async function startConsumer(url: string, config: BatcherConfig): Promise
     }
   });
 
-  async function gracefulShutdown(): Promise<void>
+  onShutdown(async () =>
   {
     console.log('Score worker shutting down...');
-    // Stop RabbitMQ from delivering new messages
-    await channel.cancel(consumerTag);
-    // Flush buffered messages and wait for all in-progress writes to finish
+    try
+    {
+      await channel.cancel(consumerTag);
+    }
+    catch (err)
+    {
+      console.error('Error cancelling consumer:', (err as Error).message);
+    }
     await batcher.shutdown();
-    await channel.close();
-    await connection.close();
-    process.exit(0);
-  }
-
-  process.on('SIGINT', gracefulShutdown);
-  process.on('SIGTERM', gracefulShutdown);
+    try { await channel.close(); } catch { /* already closed */ }
+    try { await connection.close(); } catch { /* already closed */ }
+  });
 }

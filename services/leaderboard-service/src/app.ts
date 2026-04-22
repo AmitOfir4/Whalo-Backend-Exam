@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { connectDB, connectRedis, errorHandler } from '@whalo/shared';
+import mongoose from 'mongoose';
+import { connectDB, connectRedis, getRedis, errorHandler, onShutdown } from '@whalo/shared';
 import leaderboardRoutes from './routes/leaderboard.routes';
 
 dotenv.config({ path: '../../.env' });
@@ -29,10 +30,18 @@ async function start(): Promise<void>
 {
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
-  app.listen(PORT, () =>
+
+  const server = app.listen(PORT, () =>
   {
     console.log(`Leaderboard Service running on port ${PORT}`);
   });
+
+  onShutdown(() => new Promise<void>((resolve, reject) =>
+  {
+    server.close((err) => (err ? reject(err) : resolve()));
+  }));
+  onShutdown(async () => { await getRedis().quit(); });
+  onShutdown(async () => { await mongoose.disconnect(); });
 }
 
 start();
