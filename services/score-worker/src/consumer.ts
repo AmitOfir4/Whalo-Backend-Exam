@@ -22,6 +22,24 @@ export async function startConsumer(url: string, config: BatcherConfig): Promise
   console.log(`Batch size: ${config.batchSize}, interval: ${config.batchIntervalMs}ms`);
   console.log(`Max concurrent writes: ${config.maxConcurrentWrites}`);
 
+  type EventHandler = (data: any, msg: ConsumeMessage) => void;
+
+  const handlers: Record<string, EventHandler> =
+  {
+    'score.submitted': (data, msg) =>
+    {
+      batcher.add(
+        {
+          playerId: data.playerId,
+          username: data.username,
+          score: data.score,
+          timestamp: data.timestamp ?? Date.now(),
+        },
+        msg,
+      );
+    },
+  };
+
   const { consumerTag } = await channel.consume(QUEUE_NAME, (msg) =>
   {
     if (!msg)
@@ -32,18 +50,11 @@ export async function startConsumer(url: string, config: BatcherConfig): Promise
     try
     {
       const data = JSON.parse(msg.content.toString());
+      const handler = handlers[data.event];
 
-      if (data.event === 'score.submitted' && data.playerId && data.score != null)
+      if (handler)
       {
-        batcher.add(
-          {
-            playerId: data.playerId,
-            username: data.username,
-            score: data.score,
-            timestamp: data.timestamp ?? Date.now(),
-          },
-          msg,
-        );
+        handler(data, msg);
       }
       else
       {

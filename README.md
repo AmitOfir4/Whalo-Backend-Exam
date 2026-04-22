@@ -146,8 +146,8 @@ Player lifecycle changes propagate asynchronously via the `player_events` queue 
 | Event | Effect |
 |-------|--------|
 | `player.created` | Seeds `playerscores` entry; caches username in Redis |
-| `player.username_updated` | Cascades new username to `scores`, `playerscores`, Redis hash; invalidates top10 cache |
-| `player.deleted` | Removes `playerscores`, all `scores`, Redis sorted set entry, Redis hash entry, top10 cache |
+| `player.username_updated` | Cascades new username to `scores`, `playerscores`, Redis hash |
+| `player.deleted` | Removes `playerscores`, all `scores`, Redis leaderboard entry, Redis username entry; atomically removes all `playerId:*` top-score entries from `top10scores:set` and `top10scores:data` via Lua script |
 
 ---
 

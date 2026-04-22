@@ -151,7 +151,7 @@ Both the **log worker** and **score worker** share the same configurable tuning 
 | TOKEN_BUCKET_CAPACITY | 5 | 10 | 50 |
 | TOKEN_BUCKET_REFILL_RATE | 2 | 5 | 20 |
 
-The score worker's batch flush runs `insertMany` (scores), `bulkWrite` (playerscores), and a Redis pipeline (leaderboard + top scores) all in parallel — so a larger `BATCH_SIZE` amortizes the cost of all three operations at once.
+The score worker's batch flush runs `insertMany` (scores) first to identify genuinely new inserts, then runs `bulkWrite` (playerscores `$inc`) and the Redis pipeline (leaderboard + top scores) **in parallel but only for those new inserts** — so a larger `BATCH_SIZE` amortizes the cost of all three operations and prevents any double-counting on retry.
 
 ---
 

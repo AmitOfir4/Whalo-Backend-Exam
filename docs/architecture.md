@@ -34,7 +34,7 @@ graph TB
 
     PS -->|Read/Write players| MongoDB
     PS -->|Publish player_events| RMQ
-    SS -->|Read/Write scores| MongoDB
+    SS -->|Read (player lookup + cold-start hydration)| MongoDB
     SS -->|Username lookup| Redis
     SS -->|Publish score_events| RMQ
     SS -->|Consume player_events| RMQ
@@ -77,9 +77,11 @@ sequenceDiagram
 
     RMQ->>SW: Buffer score.submitted messages
     SW->>SW: Flush when batch full OR timer fires
-    SW->>DB: insertMany(scores batch)
-    SW->>DB: bulkWrite(playerscores $inc batch)
-    SW->>Redis: Pipeline ZINCRBY leaderboard + Lua top scores (idempotent — same scoreKey)
+    SW->>DB: insertMany(scores) ordered:false — absorb duplicate-key (11000) errors, identify new inserts
+    alt newBatch has genuinely new inserts
+        SW->>DB: bulkWrite(playerscores $inc totalScore/gamesPlayed) — new inserts only
+        SW->>Redis: Pipeline ZINCRBY leaderboard + Lua top scores — new inserts only
+    end
     SW->>RMQ: ACK all messages in batch
 ```
 
@@ -113,6 +115,10 @@ sequenceDiagram
 
     Note over PS,SS: Same flow for player.username_updated and player.deleted
 ```
+
+On `player.deleted` the consumer additionally runs an atomic Lua script that scans the (≤10 entry) `top10scores:set` sorted set and removes every `playerId:*` member from both the set and the `top10scores:data` hash in a single round-trip — ensuring the deleted player's individual score entries disappear from the top-scores read path immediately.
+
+On `player.username_updated` the consumer cascades the new username to `scores`, `playerscores`, and the `leaderboard:usernames` Redis hash in parallel.
 
 ---
 
