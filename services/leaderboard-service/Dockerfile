@@ -34,4 +34,4 @@ WORKDIR /app/services/leaderboard-service
 
 EXPOSE 3003
 
-CMD ["node", "--inspect=0.0.0.0:9231", "dist/app.js"]
+CMD ["node", "dist/app.js"]

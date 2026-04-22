@@ -32,4 +32,4 @@ USER node
 
 WORKDIR /app/services/score-worker
 
-CMD ["node", "--inspect=0.0.0.0:9235", "dist/worker.js"]
+CMD ["node", "dist/worker.js"]

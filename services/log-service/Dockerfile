@@ -34,4 +34,4 @@ WORKDIR /app/services/log-service
 
 EXPOSE 3004
 
-CMD ["node", "--inspect=0.0.0.0:9232", "dist/app.js"]
+CMD ["node", "dist/app.js"]

@@ -34,4 +34,4 @@ WORKDIR /app/services/score-service
 
 EXPOSE 3002
 
-CMD ["node", "--inspect=0.0.0.0:9230", "dist/app.js"]
+CMD ["node", "dist/app.js"]

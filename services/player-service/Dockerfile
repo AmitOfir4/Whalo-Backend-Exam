@@ -39,4 +39,4 @@ WORKDIR /app/services/player-service
 
 EXPOSE 3001
 
-CMD ["node", "--inspect=0.0.0.0:9234", "dist/app.js"]
+CMD ["node", "dist/app.js"]

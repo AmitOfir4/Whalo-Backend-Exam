@@ -40,7 +40,6 @@ services:
     container_name: whalo-player-service
     ports:
       - '3001:3001'
-      - '9234:9234'
     environment:
       MONGO_URI: ${MONGO_URI}
       PLAYER_SERVICE_PORT: 3001
@@ -59,7 +58,6 @@ services:
     container_name: whalo-score-service
     ports:
       - '3002:3002'
-      - '9230:9230'
     environment:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
@@ -81,7 +79,6 @@ services:
     container_name: whalo-leaderboard-service
     ports:
       - '3003:3003'
-      - '9231:9231'
     environment:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
@@ -100,7 +97,6 @@ services:
     container_name: whalo-log-service
     ports:
       - '3004:3004'
-      - '9232:9232'
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       LOG_SERVICE_PORT: 3004
@@ -116,8 +112,6 @@ services:
       context: .
       dockerfile: services/log-worker/Dockerfile
     container_name: whalo-log-worker
-    ports:
-      - '9233:9233'
     environment:
       MONGO_URI: ${MONGO_URI}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
@@ -138,8 +132,6 @@ services:
       context: .
       dockerfile: services/score-worker/Dockerfile
     container_name: whalo-score-worker
-    ports:
-      - '9235:9235'
     environment:
       MONGO_URI: ${MONGO_URI}
       REDIS_URL: redis://redis:6379
