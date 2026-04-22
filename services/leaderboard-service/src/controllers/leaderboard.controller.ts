@@ -35,9 +35,9 @@ async function ensureLeaderboardPopulated(): Promise<void>
         return;
       }
 
-      const playerScoresCollection = mongoose.connection.db!.collection('playerscores');
-      const allScores = await playerScoresCollection
-        .find({}, { projection: { _id: 0, playerId: 1, username: 1, totalScore: 1 } })
+      const db = mongoose.connection.db!;
+      const allScores = await db.collection('playerscores')
+        .find({}, { projection: { _id: 0, playerId: 1, totalScore: 1 } })
         .toArray();
 
       if (allScores.length === 0)
@@ -45,13 +45,22 @@ async function ensureLeaderboardPopulated(): Promise<void>
         return;
       }
 
+      const playerIds = allScores.map((doc) => doc.playerId);
+      const players = await db.collection('players')
+        .find({ playerId: { $in: playerIds } }, { projection: { _id: 0, playerId: 1, username: 1 } })
+        .toArray();
+      const usernameByPlayerId = new Map<string, string>(
+        players.map((p) => [p.playerId, p.username]),
+      );
+
       const pipeline = redis.pipeline();
       for (const doc of allScores)
       {
         pipeline.zadd(LEADERBOARD_KEY, doc.totalScore, doc.playerId);
-        if (doc.username)
+        const username = usernameByPlayerId.get(doc.playerId);
+        if (username)
         {
-          pipeline.hset(USERNAMES_KEY, doc.playerId, doc.username);
+          pipeline.hset(USERNAMES_KEY, doc.playerId, username);
         }
       }
       await pipeline.exec();

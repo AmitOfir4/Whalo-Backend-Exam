@@ -46,10 +46,13 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
     // the same scoreKey — avoiding duplicate entries in the sorted set.
     const timestamp = Date.now();
     const scoreKey = `${playerId}:${timestamp}`;
+    // Top-scores metadata is immutable: only fields that can never change for a
+    // given scoreKey are denormalized here. Username is intentionally excluded
+    // and resolved at read time from USERNAMES_KEY (see getTopScores) so a
+    // rename is a single HSET instead of a cascade across every top-10 blob.
     const metadata = JSON.stringify(
     {
       playerId,
-      username,
       score,
       createdAt: new Date(timestamp).toISOString(),
     });
@@ -123,12 +126,33 @@ export async function getTopScores(_req: Request, res: Response, next: NextFunct
       return;
     }
 
-    // Fetch metadata for each key from the hash
+    // Fetch the immutable score metadata for each key from the hash.
     const rawData = await redis.hmget(TOP_SCORES_DATA, ...topKeys);
 
-    const topScores = rawData
+    const parsedScores = rawData
       .filter((item): item is string => item !== null)
-      .map((item) => JSON.parse(item));
+      .map((item) =>
+      {
+        const { username: _ignored, ...rest } = JSON.parse(item) as { username?: string } & Record<string, unknown>;
+        return rest as { playerId: string; score: number; createdAt: string };
+      });
+
+    if (parsedScores.length === 0)
+    {
+      res.json([]);
+      return;
+    }
+
+    // Join current usernames from USERNAMES_KEY in a single round-trip.
+    const playerIds = parsedScores.map((s) => s.playerId);
+    const usernames = await redis.hmget(USERNAMES_KEY, ...playerIds);
+
+    const topScores = parsedScores.map((score, i) => ({
+      playerId: score.playerId,
+      username: usernames[i] || 'Unknown',
+      score: score.score,
+      createdAt: score.createdAt,
+    }));
 
     res.json(topScores);
   }
@@ -177,7 +201,7 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
 
       console.log('Hydrating top scores from MongoDB...');
 
-      const topScores = await Score.find({}, { _id: 0, playerId: 1, username: 1, score: 1, createdAt: 1 })
+      const topScores = await Score.find({}, { _id: 0, playerId: 1, score: 1, createdAt: 1 })
         .sort({ score: -1 })
         .limit(10)
         .lean();
@@ -188,6 +212,19 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
         return;
       }
 
+      // Resolve usernames from the players collection — the source of truth
+      // owned by player-service. scores.username is a historical snapshot
+      // (the username at the time the score was achieved) and would render
+      // stale names after a rename; pulling from players gives us the live
+      // username to seed USERNAMES_KEY with.
+      const playerIds = Array.from(new Set(topScores.map((entry) => entry.playerId)));
+      const players = await mongoose.connection.db!.collection('players')
+        .find({ playerId: { $in: playerIds } }, { projection: { _id: 0, playerId: 1, username: 1 } })
+        .toArray();
+      const usernameByPlayerId = new Map<string, string>(
+        players.map((p) => [p.playerId, p.username]),
+      );
+
       const pipeline = redis.pipeline();
 
       for (const entry of topScores)
@@ -197,13 +234,17 @@ export async function hydrateTopScoresFromMongo(): Promise<void>
         const metadata = JSON.stringify(
         {
           playerId: entry.playerId,
-          username: entry.username,
           score: entry.score,
           createdAt: entry.createdAt,
         });
 
         pipeline.zadd(TOP_SCORES_SET, entry.score, scoreKey);
         pipeline.hset(TOP_SCORES_DATA, scoreKey, metadata);
+        const username = usernameByPlayerId.get(entry.playerId);
+        if (username)
+        {
+          pipeline.hset(USERNAMES_KEY, entry.playerId, username);
+        }
       }
 
       await pipeline.exec();

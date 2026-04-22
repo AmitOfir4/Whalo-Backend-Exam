@@ -200,13 +200,11 @@ export class Batcher
           return;
         }
 
-        // 2. Aggregated player totals — only for genuinely new scores
         const playerScoreOps = newBatch.map((item) => ({
           updateOne: {
             filter: { playerId: item.data.playerId },
             update: {
               $inc: { totalScore: item.data.score, gamesPlayed: 1 },
-              $setOnInsert: { username: item.data.username },
             },
             upsert: true,
           },
@@ -229,7 +227,6 @@ export class Batcher
           const metadata = JSON.stringify(
           {
             playerId: item.data.playerId,
-            username: item.data.username,
             score: item.data.score,
             createdAt: new Date(item.data.timestamp).toISOString(),
           });

@@ -46,11 +46,13 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
   {
     'player.created': async ({ playerId, username }) =>
     {
-      // Seed playerscores entry and cache username — idempotent via upsert
+      // Seed playerscores totals and cache username — idempotent via upsert.
+      // playerscores no longer stores username: cold-start backfills read
+      // the current username from the players collection (source of truth).
       await Promise.all([
         mongoose.connection.db!.collection('playerscores').updateOne(
           { playerId },
-          { $setOnInsert: { playerId, username, totalScore: 0, gamesPlayed: 0 } },
+          { $setOnInsert: { playerId, totalScore: 0, gamesPlayed: 0 } },
           { upsert: true }
         ),
         getRedis().hset(USERNAMES_KEY, playerId, username),
@@ -61,14 +63,7 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
 
     'player.username_updated': async ({ playerId, username }) =>
     {
-      // Cascade username change to all denormalized locations
-      await Promise.all([
-        mongoose.connection.db!.collection('scores').updateMany({ playerId }, { $set: { username } }),
-        mongoose.connection.db!.collection('playerscores').updateOne({ playerId }, { $set: { username } }),
-        getRedis().hset(USERNAMES_KEY, playerId, username),
-        getRedis().del(TOP10_CACHE_KEY),
-      ]);
-
+      await getRedis().hset(USERNAMES_KEY, playerId, username);
       console.log(`Updated username for player: ${playerId}`);
     },
 
