@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/worker.js",
-    "dev": "ts-node-dev --respawn --transpile-only src/worker.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/worker.ts",
+    "dev:debug": "ts-node-dev --inspect=127.0.0.1:9245 --respawn --transpile-only src/worker.ts"
   },
   "dependencies": {
     "@whalo/shared": "*",

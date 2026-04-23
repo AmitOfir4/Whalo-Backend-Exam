@@ -2,70 +2,90 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Attach: player-service",
+      "name": "Attach: player-service (local dev)",
       "type": "node",
       "request": "attach",
-      "port": 9234,
+      "port": 9242,
       "address": "localhost",
       "restart": true,
       "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/services/player-service",
-      "remoteRoot": "/app/services/player-service"
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      "name": "Attach: score-service",
+      "name": "Attach: score-service (local dev)",
       "type": "node",
       "request": "attach",
-      "port": 9230,
+      "port": 9240,
       "address": "localhost",
       "restart": true,
       "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/services/score-service",
-      "remoteRoot": "/app/services/score-service"
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      "name": "Attach: leaderboard-service",
+      "name": "Attach: score-worker (local dev)",
       "type": "node",
       "request": "attach",
-      "port": 9231,
+      "port": 9241,
       "address": "localhost",
       "restart": true,
       "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/services/leaderboard-service",
-      "remoteRoot": "/app/services/leaderboard-service"
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      "name": "Attach: log-service",
+      "name": "Attach: leaderboard-service (local dev)",
       "type": "node",
       "request": "attach",
-      "port": 9232,
+      "port": 9243,
       "address": "localhost",
       "restart": true,
       "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/services/log-service",
-      "remoteRoot": "/app/services/log-service"
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      "name": "Attach: log-worker",
+      "name": "Attach: log-service (local dev)",
       "type": "node",
       "request": "attach",
-      "port": 9233,
+      "port": 9244,
       "address": "localhost",
       "restart": true,
       "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/services/log-worker",
-      "remoteRoot": "/app/services/log-worker"
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Attach: log-worker (local dev)",
+      "type": "node",
+      "request": "attach",
+      "port": 9245,
+      "address": "localhost",
+      "restart": true,
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     }
   ],
   "compounds": [
     {
-      "name": "Attach: All Services",
+      "name": "Attach: All Services (local dev)",
       "configurations": [
-        "Attach: player-service",
-        "Attach: score-service",
-        "Attach: leaderboard-service",
-        "Attach: log-service",
-        "Attach: log-worker"
+        "Attach: player-service (local dev)",
+        "Attach: score-service (local dev)",
+        "Attach: score-worker (local dev)",
+        "Attach: leaderboard-service (local dev)",
+        "Attach: log-service (local dev)",
+        "Attach: log-worker (local dev)"
+      ]
+    },
+    {
+      "name": "Attach: Score Pipeline (local dev)",
+      "configurations": [
+        "Attach: score-service (local dev)",
+        "Attach: score-worker (local dev)"
+      ]
+    },
+    {
+      "name": "Attach: Log Pipeline (local dev)",
+      "configurations": [
+        "Attach: log-service (local dev)",
+        "Attach: log-worker (local dev)"
       ]
     }
   ]
