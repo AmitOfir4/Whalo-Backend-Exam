@@ -97,13 +97,13 @@ Update a player's username and/or email.
 ---
 
 ### DELETE /players/:playerId
-Delete a player profile.
+Delete a player profile. Returns no response body on success.
 
 **Responses:**
 
 | Status | Description |
 |--------|-------------|
-| 200 | Player deleted |
+| 204 | Player deleted (no body) |
 | 404 | Player not found |
 
 ---

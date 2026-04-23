@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import { connectDB, connectRedis, getRedis, errorHandler, onShutdown } from '@whalo/shared';
+import { connectDB, connectRedis, getRedis, errorHandler, onShutdown, AppError } from '@whalo/shared';
 import leaderboardRoutes from './routes/leaderboard.routes';
 
 dotenv.config({ path: '../../.env' });
@@ -22,6 +22,14 @@ app.use('/players', leaderboardRoutes);
 app.get('/health', (_req, res) =>
 {
   res.json({ status: 'ok', service: 'leaderboard-service' });
+});
+
+// Catch-all for unmatched routes — funnelled through the shared error
+// middleware so unknown paths return the same JSON error shape as 4xx/5xx
+// responses instead of Express's default HTML "Cannot GET /foo".
+app.use((_req, _res, next) =>
+{
+  next(new AppError('Route not found', 404));
 });
 
 app.use(errorHandler);

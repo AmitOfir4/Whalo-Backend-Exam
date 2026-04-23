@@ -115,10 +115,10 @@
           },
           "response": [
             {
-              "name": "200 - Player Deleted",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"message\": \"Player deleted successfully\"\n}"
+              "name": "204 - Player Deleted",
+              "status": "No Content",
+              "code": 204,
+              "body": ""
             }
           ]
         },

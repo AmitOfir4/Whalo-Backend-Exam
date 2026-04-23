@@ -116,8 +116,7 @@ export async function deletePlayer(req: Request, res: Response, next: NextFuncti
     }
 
     await publishPlayerEvent({ event: 'player.deleted', playerId });
-
-    res.json({ message: 'Player deleted successfully' });
+    res.status(204).send();
   }
   catch (error)
   {
