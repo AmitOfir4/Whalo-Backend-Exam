@@ -129,12 +129,12 @@ sequenceDiagram
     SS->>DB: upsert playerscores {playerId, totalScore:0, gamesPlayed:0}
     SS->>Redis: SADD players:known playerId
 
-    Note over PS,SS: player.deleted triggers tombstone-cascade; player.username_updated is a no-op here
+    Note over PS,SS: player.deleted triggers tombstone-cascade; username changes are not published
 ```
 
 On `player.deleted` the consumer removes `playerscores`, all `scores`, `ZREM leaderboard`, `SREM players:known`, and runs an atomic Lua script that scans the (≤10 entry) `top10scores:set` sorted set and removes every `playerId:*` member from both the set and the `top10scores:data` hash in a single round-trip — ensuring the deleted player's individual score entries disappear from the top-scores read path immediately.
 
-`player.username_updated` is a registered no-op handler on the score-service consumer: the score pipeline never stores the username, so renames require no cascade. Clients always re-resolve display names against `player-service` via `GET /players/:playerId`, so the update is visible on the next read.
+Username changes are intentionally *not* published on `player_events`: the score pipeline never denormalizes the display name, and no other service subscribes to the queue. Clients always re-resolve display names against `player-service` via `GET /players/:playerId`, so updates are visible on the next read.
 
 ---
 

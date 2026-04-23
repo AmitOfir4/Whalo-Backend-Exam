@@ -95,12 +95,6 @@ export async function updatePlayer(req: Request, res: Response, next: NextFuncti
       throw new AppError('Player not found', 404);
     }
 
-    // Propagate username change to score-service so denormalized data stays consistent
-    if (updateData.username)
-    {
-      await publishPlayerEvent({ event: 'player.username_updated', playerId, username: updateData.username });
-    }
-
     res.json(player.toJSON());
   }
   catch (error)

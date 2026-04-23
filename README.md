@@ -29,7 +29,7 @@ Client → Player Service      (:3001) → MongoDB
 
 | Service | Port | Responsibility |
 |---|---|---|
-| Player Service | 3001 | CRUD player profiles; publishes `player.created / username_updated / deleted` |
+| Player Service | 3001 | CRUD player profiles; publishes `player.created / deleted` |
 | Score Service | 3002 | Accepts score submissions (`202`), serves top-10 from Redis, consumes `player_events` |
 | Leaderboard Service | 3003 | Paginated leaderboard served from a Redis sorted set |
 | Log Service | 3004 | Validates and fans log events into a priority queue (`202`) |
@@ -83,7 +83,7 @@ npm run dev:score-worker    # score worker
 |---|---|---|---|
 | POST | `/players` | Player | `201` on success |
 | GET | `/players/:playerId` | Player | No "list all players" endpoint is exposed |
-| PUT | `/players/:playerId` | Player | Publishes `player.username_updated` when applicable |
+| PUT | `/players/:playerId` | Player | Updates username/email; no event published (display names are resolved client-side) |
 | DELETE | `/players/:playerId` | Player | Publishes `player.deleted` |
 | POST | `/scores` | Score | **202** — top-10 updated synchronously via Lua; durable write async |
 | GET | `/scores/top` | Score | Top 10 from Redis (`top10scores:set` + `top10scores:data`) |
@@ -139,8 +139,9 @@ Display names live exclusively in `player-service`. The score pipeline only need
 | Event | Handler (Score Service consumer) |
 |---|---|
 | `player.created` | Upserts `playerscores` with `totalScore: 0`; `SADD players:known` |
-| `player.username_updated` | No-op — score pipeline never denormalizes the username, so renames are irrelevant here |
 | `player.deleted` | Deletes `playerscores`, all `scores`, `ZREM leaderboard`, `SREM players:known`; runs an atomic Lua script that scans the ≤10-entry top-scores set and removes every `playerId:*` member from both the set and the data hash in one round-trip |
+
+Username changes are intentionally *not* published: the score pipeline never denormalizes the display name, and no other service subscribes to `player_events`. Clients resolve usernames for leaderboard / top-score rows via `GET /players/:playerId` against `player-service` when enrichment is needed.
 
 ---
 

@@ -61,12 +61,6 @@ export async function startPlayerEventsConsumer(url: string): Promise<void>
       console.log(`Initialized data for new player: ${playerId}`);
     },
 
-    // Explicit no-op — username is no longer denormalised anywhere in the
-    // score pipeline, so renames are semantically irrelevant to this service.
-    // Registering the handler (rather than letting it fall through to the
-    // "Unknown event" branch) keeps logs clean and makes the intent explicit.
-    'player.username_updated': async () => { /* intentionally empty */ },
-
     'player.deleted': async ({ playerId }) =>
     {
       const redis = getRedis();
