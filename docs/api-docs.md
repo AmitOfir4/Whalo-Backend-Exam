@@ -268,3 +268,18 @@ All errors follow a consistent format:
 ```
 
 The `details` array is included only for validation errors (400).
+
+### Unknown routes
+
+Requests to any path not matched by a registered route return `404` in the same JSON shape (no `details` array):
+
+```json
+{
+  "error": {
+    "message": "Route not found",
+    "code": 404
+  }
+}
+```
+
+This applies to every service — the catch-all is registered in each service's `app.ts` just before the error middleware, so unknown routes never fall through to Express's default HTML response.
