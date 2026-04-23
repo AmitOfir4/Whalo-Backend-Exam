@@ -46,9 +46,6 @@ export async function submitScore(req: Request, res: Response, next: NextFunctio
       createdAt: new Date(timestamp).toISOString(),
     });
 
-    // Publish the event — durable score persistence (insertMany into scores
-    // + $inc on playerscores) is still handled by the score-worker, keeping
-    // the HTTP path non-blocking.
     await publishScoreEvent({ event: 'score.submitted', playerId, score, timestamp });
 
     // Update both Redis read paths synchronously so the client sees its

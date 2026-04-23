@@ -30,7 +30,7 @@ export {
 } from './constants/redis-keys';
 export { LOGS_QUEUE, PLAYER_EVENTS_QUEUE, SCORE_EVENTS_QUEUE } from './constants/queue-names';
 
-export type { IPlayer, CreatePlayerDto, UpdatePlayerDto } from './types/player.types';
-export type { IScore, CreateScoreDto, LeaderboardEntry, PaginationQuery } from './types/score.types';
-export type { ILog, CreateLogDto, LogPriority } from './types/log.types';
+export type { IPlayer } from './types/player.types';
+export type { IScore } from './types/score.types';
+export type { ILog, LogPriority } from './types/log.types';
 export { LOG_PRIORITY_MAP, QUEUE_MAX_PRIORITY } from './types/log.types';

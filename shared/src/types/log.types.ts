@@ -15,9 +15,3 @@ export interface ILog {
   receivedAt: Date;
   processedAt?: Date;
 }
-
-export interface CreateLogDto {
-  playerId: string;
-  logData: string;
-  priority?: LogPriority;
-}

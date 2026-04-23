@@ -3,18 +3,3 @@ export interface IScore {
   score: number;
   createdAt: Date;
 }
-
-export interface CreateScoreDto {
-  playerId: string;
-  score: number;
-}
-
-export interface LeaderboardEntry {
-  playerId: string;
-  totalScore: number;
-}
-
-export interface PaginationQuery {
-  page?: number;
-  limit?: number;
-}
