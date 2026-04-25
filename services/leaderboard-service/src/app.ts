@@ -3,7 +3,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import { connectDB, connectRedis, getRedis, errorHandler, onShutdown, AppError } from '@whalo/shared';
+import {
+  connectDB,
+  connectRedis,
+  getRedis,
+  errorHandler,
+  onShutdown,
+  AppError,
+  hydrateLeaderboardFromMongo,
+} from '@whalo/shared';
 import leaderboardRoutes from './routes/leaderboard.routes';
 
 dotenv.config({ path: '../../.env' });
@@ -38,6 +46,12 @@ async function start(): Promise<void>
 {
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
+
+  // Cold-start: backfill the leaderboard ZSET from MongoDB before accepting
+  // traffic. The helper is sentinel-gated and lock-wrapped, so it's safe to
+  // call from multiple replicas and from score-service's startup as well —
+  // whoever wins the lock first hydrates, the rest are a single EXISTS check.
+  await hydrateLeaderboardFromMongo(getRedis(), mongoose.connection);
 
   const server = app.listen(PORT, () =>
   {

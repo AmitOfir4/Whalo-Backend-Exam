@@ -3,7 +3,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import { connectDB, connectRedis, getRedis, errorHandler, onShutdown, AppError } from '@whalo/shared';
+import {
+  connectDB,
+  connectRedis,
+  getRedis,
+  errorHandler,
+  onShutdown,
+  AppError,
+  hydrateLeaderboardFromMongo,
+} from '@whalo/shared';
 import scoreRoutes from './routes/score.routes';
 import { startPlayerEventsConsumer } from './queue/consumer';
 import { connectScoreQueue, closeScoreQueue } from './queue/publisher';
@@ -43,6 +51,15 @@ async function start(): Promise<void>
   await connectDB(MONGO_URI);
   connectRedis(REDIS_URL);
   await connectScoreQueue(RABBITMQ_URL);
+
+  // Cold-start: backfill the leaderboard ZSET *before* the player_events
+  // consumer starts and *before* HTTP comes up. Otherwise a ZINCRBY on the
+  // submit path or a ZREM on a player.deleted event could land on an empty
+  // ZSET and produce an incorrect cumulative total for that player. The
+  // helper is sentinel-gated, so leaderboard-service hydrating in parallel
+  // is a no-op for whichever service runs second.
+  await hydrateLeaderboardFromMongo(getRedis(), mongoose.connection);
+
   await startPlayerEventsConsumer(RABBITMQ_URL);
 
   // Cold-start: populate top scores from MongoDB if Redis is empty

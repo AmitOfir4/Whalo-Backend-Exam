@@ -1,5 +1,14 @@
 export const LEADERBOARD_KEY = 'leaderboard';
 
+// Sentinel key written after the leaderboard ZSET has been backfilled from
+// MongoDB. Hydration gates on the sentinel rather than ZCARD because ZCARD > 0
+// is not a reliable "already hydrated" signal — a writer (score-service) can
+// ZINCRBY a single new entry into a fresh, un-hydrated ZSET, which would make
+// ZCARD > 0 fire false-positive and skip the historical backfill. The sentinel
+// has no TTL: a Redis flush wipes it alongside the cache, so the next
+// hydration call re-runs naturally.
+export const LEADERBOARD_HYDRATED_KEY = 'leaderboard:hydrated';
+
 // Redis SET of playerIds known to score-service — populated by
 // `player.created` events and pruned by `player.deleted`. Used by the
 // score-submit path (SISMEMBER) to reject scores for nonexistent players

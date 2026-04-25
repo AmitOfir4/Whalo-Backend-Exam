@@ -9,6 +9,9 @@ export { onShutdown } from './utils/graceful-shutdown';
 export { isDuplicateKeyError, throwConflictIfDuplicate } from './utils/db-errors';
 export { withDistributedLock } from './utils/distributed-lock';
 export type { DistributedLockOptions } from './utils/distributed-lock';
+export { hydrateOnce } from './utils/hydrate-once';
+export type { HydrateOnceOptions } from './utils/hydrate-once';
+export { hydrateLeaderboardFromMongo } from './utils/leaderboard-hydration';
 export {
   IDEMPOTENT_LEADERBOARD_INCR_LUA,
   DEFAULT_LEADERBOARD_APPLIED_TTL_SECONDS,
@@ -22,6 +25,7 @@ export type {
 
 export {
   LEADERBOARD_KEY,
+  LEADERBOARD_HYDRATED_KEY,
   PLAYERS_KNOWN_KEY,
   TOP_SCORES_SET,
   TOP_SCORES_DATA,
